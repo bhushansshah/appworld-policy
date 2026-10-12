@@ -61,6 +61,11 @@ class PhoneNumberName(ResponseModel):
     phone_number: str
 
 
+class PolicyResponse(ResponseModel):
+    policy_id: int
+    policy: str
+
+
 def response_args(response_type: Any) -> dict[str, Any]:
     # NOTE: Do not set default values in apps/*/responses.py unless you want certain
     # field to be not set if not passed. It only happens in apps/api_docs/responses.py right now.

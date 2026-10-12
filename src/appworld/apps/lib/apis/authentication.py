@@ -16,6 +16,7 @@ from inflection import humanize, titleize
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from appworld.apps import get_all_apps
+from appworld.apps.lib.apis.policies import add_show_policies_api
 from appworld.apps.lib.models.orm import SQLModel
 from appworld.common.collections import unique
 from appworld.common.datetime import DateTime
@@ -251,6 +252,9 @@ def setup_app(
     def index() -> Dict:
         """meta: No-API-Docs"""
         return _hello_request(name)  # pragma: no cover
+
+    if name in get_all_apps(skip_admin=True, skip_api_docs=True, skip_supervisor=True):
+        add_show_policies_api(app, name)
 
     return app, load_user, logging_manager
 
