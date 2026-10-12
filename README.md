@@ -1,3 +1,27 @@
+> [!NOTE]
+> **appworld-policy** is a modified copy of [AppWorld](https://github.com/StonyBrookNLP/appworld)
+> (upstream commit `42b5bcf`) for studying whether agents follow the policies of their user, of
+> other people, and of the apps while completing tasks. Our work is on the `policy-bench` branch;
+> `main` mirrors upstream. The rest of this README is AppWorld's own.
+>
+> Setup (Python 3.12, [uv](https://docs.astral.sh/uv/), [Git LFS](https://git-lfs.com/)):
+>
+> ```bash
+> git lfs install
+> git clone git@github.com:bhushansshah/appworld-policy.git && cd appworld-policy
+> uv venv --python 3.12 .venv
+> uv pip install --python .venv/bin/python -e . -e "./experiments[simplified]" -c constraints.txt
+> .venv/bin/appworld install --repo     # unpack the encrypted app code
+> .venv/bin/appworld download data
+> .venv/bin/appworld verify tasks       # replays ground-truth solutions, no LLM needed
+> ```
+>
+> `constraints.txt` pins package versions known to work (including `sqlmodel<0.0.45`; newer
+> versions reject the naive datetimes that the Amazon app stores). Put `OPENAI_API_KEY` in `.env`.
+>
+> As with upstream, the apps' code and the data are shared only in encrypted form (see the
+> [license](#lock_with_ink_pen-license)); keep them git-ignored and re-pack bundles after changing app code.
+
 <h2 align="center">
   <a href="https://appworld.dev/"><img src="/images/banner-light.svg" alt="AppWorld Banner" width="100%"></a>
 </h2>
