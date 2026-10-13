@@ -10,9 +10,10 @@
 > git lfs install
 > git clone git@github.com:bhushansshah/appworld-policy.git && cd appworld-policy
 > uv venv --python 3.12 .venv
-> uv pip install --python .venv/bin/python -e . -e "./experiments[simplified]" -c constraints.txt
+> uv pip install --python .venv/bin/python -e . -e "./experiments[simplified]" openapi-spec-validator -c constraints.txt
 > .venv/bin/appworld install --repo     # unpack the encrypted app code
 > .venv/bin/appworld download data
+> .venv/bin/python scripts/prepare_policy_data.py   # add the policy tables and API docs to the data
 > .venv/bin/appworld verify tasks       # replays ground-truth solutions, no LLM needed
 > ```
 >
