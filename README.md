@@ -17,6 +17,12 @@
 > .venv/bin/appworld verify tasks       # replays ground-truth solutions, no LLM needed
 > ```
 >
+> Policies: each task's policies (the user's, other people's, and each app's) are stored in its supervisor
+> data and read by agents through `apis.supervisor.show_my_policies()`,
+> `apis.supervisor.show_person_policies(email)` and `apis.<app>.show_policies()`. Our code lives in
+> `policy_scenarios/`: `load_policies.py` loads a task's policies; check it with
+> `.venv/bin/python -m policy_scenarios.check_load_policies`.
+>
 > `constraints.txt` pins package versions known to work (including `sqlmodel<0.0.45`; newer
 > versions reject the naive datetimes that the Amazon app stores). Put `OPENAI_API_KEY` in `.env`.
 >
