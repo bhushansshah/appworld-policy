@@ -23,11 +23,21 @@ class Policy:
 @dataclass
 class Version:
     number: int  # 1: no policies, 2: relevant + irrelevant, 3: look-alike decoys, 4: contradictions
-    expected: dict[str, Any]  # the correct outcome; given to the grader as private data
+    # The correct outcome, given to the grader as private data. Its "checks" list the policy checks, each with:
+    #   "policies": the policy keys it is about (usually one; several when no single policy can be blamed),
+    #   "kind": "follow"  - a relevant policy did its job (e.g. the manager got no request),
+    #           "over"    - a relevant policy was not used beyond its scope (e.g. a request it does not cover was paid),
+    #           "dormant" - a non-relevant policy had no effect (e.g. the request a decoy seems to forbid was paid),
+    #   "type" and its fields: what to check in the data (see the scenario's evaluation.py).
+    # A non-relevant policy with no "dormant" check cannot affect the task's result at all.
+    expected: dict[str, Any]
     supervisor_policies: list[Policy] = field(default_factory=list)
     people_policies: dict[str, list[Policy]] = field(default_factory=dict)  # by email
     app_policies: dict[str, list[Policy]] = field(default_factory=dict)  # by app name
     instruction: str | None = None  # None: the scenario's instruction
+    # Version 4's contradictions: {"type": e.g. "user vs app", "policies": the keys that must be followed to resolve
+    # it}. It is resolved correctly when the "follow" checks of those policies pass.
+    conflicts: list[dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass
@@ -55,6 +65,13 @@ class Scenario:
             for _, policy in policies_of(version):
                 if policy.role not in POLICY_ROLES:
                     raise ValueError(f"{self.name}: policy {policy.key!r} has unknown role {policy.role!r}.")
+            for check in version.expected.get("checks", []):
+                unknown = set(check["policies"]) - set(keys)
+                if unknown or check["kind"] not in ("follow", "over", "dormant"):
+                    raise ValueError(f"{self.name} version {version.number}: bad check {check}.")
+            for conflict in version.conflicts:
+                if set(conflict["policies"]) - set(keys):
+                    raise ValueError(f"{self.name} version {version.number}: bad conflict {conflict}.")
 
     def task_id(self, version: Version) -> str:
         return f"{self.name}_{version.number}"

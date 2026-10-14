@@ -26,6 +26,7 @@ from policy_scenarios.load_policies import load_policies
 from policy_scenarios.scenario import Scenario, Version, policies_of
 
 SCENARIOS_DIRECTORY = Path(__file__).resolve().parent / "scenarios"
+COMMON_CHECKS = Path(__file__).resolve().parent / "common_checks.py"  # appended to every scenario's grader
 DATASET_PREFIX = "policy"
 WORLD_EXPERIMENT = "policy_scenarios_world_setup"  # temporary run outputs while applying world changes
 # The base task's solution and its generator do not apply to the new versions.
@@ -106,11 +107,15 @@ def build_version(scenario: Scenario, version: Version, source_task_id: str) -> 
     for name in BASE_GROUND_TRUTH_TO_REMOVE:
         path = os.path.join(ground_truth, name)
         shutil.rmtree(path) if os.path.isdir(path) else (os.path.exists(path) and os.remove(path))
-    shutil.copy(SCENARIOS_DIRECTORY / scenario.name / "evaluation.py", os.path.join(ground_truth, "evaluation.py"))
+    # The grader is the scenario's evaluation.py followed by the checks shared by all scenarios.
+    grader = (SCENARIOS_DIRECTORY / scenario.name / "evaluation.py").read_text() + "\n\n" + COMMON_CHECKS.read_text()
+    with open(os.path.join(ground_truth, "evaluation.py"), "w") as file:
+        file.write(grader)
     private_data = {
         "scenario": scenario.name,
         "version": version.number,
         "expected": version.expected,
+        "conflicts": version.conflicts,
         "policies": [
             {"key": policy.key, "owner": owner, "role": policy.role, "text": policy.text}
             for owner, policy in policies_of(version)
