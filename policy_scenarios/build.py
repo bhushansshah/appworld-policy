@@ -1,7 +1,8 @@
 """Build policy scenarios into AppWorld tasks, and write the dataset lists to run them.
 
 For each scenario in policy_scenarios/scenarios/<name>/scenario.py and each of its versions, this makes the
-task data/tasks/<name>_<version>: a copy of the scenario's base task with the version's instruction, its
+task data/tasks/<name>_<version>: a copy of the scenario's base task (with the scenario's world changes, if it
+has any, applied through the apps and recorded by AppWorld) with the version's instruction, its
 policies (loaded with load_policies), and the scenario's grader (evaluation.py) with the version's correct
 outcome and policy labels as private data. It then writes data/datasets/policy_v1.txt ... policy_v4.txt
 (the tasks of each version) and policy_all.txt.
@@ -26,6 +27,7 @@ from policy_scenarios.scenario import Scenario, Version, policies_of
 
 SCENARIOS_DIRECTORY = Path(__file__).resolve().parent / "scenarios"
 DATASET_PREFIX = "policy"
+WORLD_EXPERIMENT = "policy_scenarios_world_setup"  # temporary run outputs while applying world changes
 # The base task's solution and its generator do not apply to the new versions.
 BASE_GROUND_TRUTH_TO_REMOVE = ["solution.py", "compiled_solution.py", "generator.py", "api_calls.json", "__pycache__"]
 
@@ -53,15 +55,39 @@ def load_scenario(name: str) -> Scenario:
 def build_scenario(scenario: Scenario) -> list[str]:
     if scenario.base_task_id not in load_task_ids("train") + load_task_ids("dev"):
         raise ValueError(f"{scenario.name}: the base task must be a train or dev task (not test).")
-    return [build_version(scenario, version) for version in scenario.versions]
+    source_task_id = prepare_world(scenario) if scenario.world_setup else scenario.base_task_id
+    try:
+        return [build_version(scenario, version, source_task_id) for version in scenario.versions]
+    finally:
+        if source_task_id != scenario.base_task_id:
+            shutil.rmtree(os.path.join(path_store.data, "tasks", source_task_id), ignore_errors=True)
 
 
-def build_version(scenario: Scenario, version: Version) -> str:
+def prepare_world(scenario: Scenario) -> str:
+    """Make <name>_0: a copy of the base task with the scenario's world changes, as recorded by AppWorld."""
+    from appworld import AppWorld
+
+    task_id = f"{scenario.name}_0"
+    task_directory = os.path.join(path_store.data, "tasks", task_id)
+    shutil.rmtree(task_directory, ignore_errors=True)
+    shutil.copytree(os.path.join(path_store.data, "tasks", scenario.base_task_id), task_directory)
+    with AppWorld(task_id=task_id, experiment_name=WORLD_EXPERIMENT, allow_datetime_change=True) as world:
+        scenario.world_setup(world)  # type: ignore[misc]
+        world.save()
+    saved_directory = os.path.join(path_store.experiment_outputs, WORLD_EXPERIMENT, "tasks", task_id, "dbs")
+    for name in os.listdir(saved_directory):
+        if name.endswith(".jsonl"):
+            shutil.copy(os.path.join(saved_directory, name), os.path.join(task_directory, "dbs", name))
+    shutil.rmtree(os.path.join(path_store.experiment_outputs, WORLD_EXPERIMENT), ignore_errors=True)
+    return task_id
+
+
+def build_version(scenario: Scenario, version: Version, source_task_id: str) -> str:
     tasks_directory = os.path.join(path_store.data, "tasks")
     task_id = scenario.task_id(version)
     task_directory = os.path.join(tasks_directory, task_id)
     shutil.rmtree(task_directory, ignore_errors=True)
-    shutil.copytree(os.path.join(tasks_directory, scenario.base_task_id), task_directory)
+    shutil.copytree(os.path.join(tasks_directory, source_task_id), task_directory)
 
     instruction = version.instruction or scenario.instruction
     if instruction:

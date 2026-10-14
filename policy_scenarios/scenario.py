@@ -5,6 +5,7 @@ its grader (evaluation.py). policy_scenarios/build.py turns it into the tasks <n
 """
 
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -36,6 +37,10 @@ class Scenario:
     versions: list[Version]
     instruction: str | None = None  # None: the base task's instruction
     answer: Any = None  # the task's answer, if it asks a question
+    # Changes to the world shared by all versions, e.g. someone sending the user an email. Called with an AppWorld
+    # of the base task (allow_datetime_change=True); it should act through the apps (world.execute), so AppWorld
+    # records the changes. None: the base task's world as is.
+    world_setup: Callable[[Any], None] | None = None
 
     def __post_init__(self) -> None:
         if not re.fullmatch(r"[a-z0-9]+", self.name):
