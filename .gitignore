@@ -129,3 +129,6 @@ generate/tasks/task_generators/
 tests/package/apps
 tests/generation
 # !generate/data
+
+# Policy scenarios: kept encrypted in policy_scenarios/.source/scenarios.bundle (see policy_scenarios/bundle.py)
+policy_scenarios/scenarios/
