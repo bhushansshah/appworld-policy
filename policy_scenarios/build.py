@@ -1,11 +1,11 @@
 """Build policy scenarios into AppWorld tasks, and write the dataset lists to run them.
 
 For each scenario in policy_scenarios/scenarios/<name>/scenario.py and each of its versions, this makes the
-task data/tasks/<name>_<version>: a copy of the scenario's base task (with the scenario's world changes, if it
-has any, applied through the apps and recorded by AppWorld) with the version's instruction, its
-policies (loaded with load_policies), and the scenario's grader (evaluation.py) with the version's correct
-outcome and policy labels as private data. It then writes data/datasets/policy_v1.txt ... policy_v4.txt
-(the tasks of each version) and policy_all.txt.
+task data/tasks/<name>_<version>: a copy of the scenario's base task (with the scenario's shared world changes,
+then the version's own world changes, if any, applied through the apps and recorded by AppWorld) with the
+version's instruction, answer and policies (loaded with load_policies), and the scenario's grader (evaluation.py)
+with the version's correct outcome, policy labels (relevance, level) and conflicts as private data. It then
+writes data/datasets/policy_v1.txt ... policy_v4.txt (the tasks of each version) and policy_all.txt.
 
 The scenario files are kept encrypted in git; unpack them first (policy_scenarios/bundle.py).
 
@@ -17,8 +17,15 @@ import importlib.util
 import json
 import os
 import shutil
+from collections.abc import Callable
+from dataclasses import asdict
 from pathlib import Path
+from typing import Any
 
+import orjson
+
+from appworld.apps.lib.models.db import CachedDBHandler
+from appworld.collections.models import ModelCollection
 from appworld.common.path_store import path_store
 from appworld.task import load_task_ids
 
@@ -30,7 +37,10 @@ COMMON_CHECKS = Path(__file__).resolve().parent / "common_checks.py"  # appended
 DATASET_PREFIX = "policy"
 WORLD_EXPERIMENT = "policy_scenarios_world_setup"  # temporary run outputs while applying world changes
 # The base task's solution and its generator do not apply to the new versions.
-BASE_GROUND_TRUTH_TO_REMOVE = ["solution.py", "compiled_solution.py", "generator.py", "api_calls.json", "__pycache__"]
+BASE_GROUND_TRUTH_TO_REMOVE = [
+    "solution.py", "compiled_solution.py", "generator.py", "api_calls.json", "required_apps.json",
+    "required_apis.json", "__pycache__",
+]
 
 
 def scenario_names() -> list[str]:
@@ -56,31 +66,64 @@ def load_scenario(name: str) -> Scenario:
 def build_scenario(scenario: Scenario) -> list[str]:
     if scenario.base_task_id not in load_task_ids("train") + load_task_ids("dev"):
         raise ValueError(f"{scenario.name}: the base task must be a train or dev task (not test).")
-    source_task_id = prepare_world(scenario) if scenario.world_setup else scenario.base_task_id
     try:
+        source_task_id = prepare_world(scenario) if scenario.world_setup else scenario.base_task_id
         return [build_version(scenario, version, source_task_id) for version in scenario.versions]
-    finally:
-        if source_task_id != scenario.base_task_id:
-            shutil.rmtree(os.path.join(path_store.data, "tasks", source_task_id), ignore_errors=True)
+    finally:  # <name>_0 is only a temporary task (see prepare_world)
+        shutil.rmtree(os.path.join(path_store.data, "tasks", f"{scenario.name}_0"), ignore_errors=True)
 
 
 def prepare_world(scenario: Scenario) -> str:
-    """Make <name>_0: a copy of the base task with the scenario's world changes, as recorded by AppWorld."""
-    from appworld import AppWorld
-
+    """Make <name>_0: a copy of the base task with the scenario's shared world changes."""
     task_id = f"{scenario.name}_0"
     task_directory = os.path.join(path_store.data, "tasks", task_id)
     shutil.rmtree(task_directory, ignore_errors=True)
     shutil.copytree(os.path.join(path_store.data, "tasks", scenario.base_task_id), task_directory)
-    with AppWorld(task_id=task_id, experiment_name=WORLD_EXPERIMENT, allow_datetime_change=True) as world:
-        scenario.world_setup(world)  # type: ignore[misc]
-        world.save()
-    saved_directory = os.path.join(path_store.experiment_outputs, WORLD_EXPERIMENT, "tasks", task_id, "dbs")
-    for name in os.listdir(saved_directory):
-        if name.endswith(".jsonl"):
-            shutil.copy(os.path.join(saved_directory, name), os.path.join(task_directory, "dbs", name))
-    shutil.rmtree(os.path.join(path_store.experiment_outputs, WORLD_EXPERIMENT), ignore_errors=True)
+    apply_world_setup(task_id, scenario.world_setup)  # type: ignore[arg-type]
     return task_id
+
+
+def apply_world_setup(task_id: str, world_setup: Callable[[Any], None]) -> None:
+    """Run world_setup in the task's world and save the changes, as recorded by AppWorld, into the task's dbs."""
+    from appworld import AppWorld
+
+    try:
+        with AppWorld(task_id=task_id, experiment_name=WORLD_EXPERIMENT, allow_datetime_change=True) as world:
+            world_setup(world)
+            world.save()
+        saved_directory = os.path.join(path_store.experiment_outputs, WORLD_EXPERIMENT, "tasks", task_id, "dbs")
+        task_dbs = os.path.join(path_store.data, "tasks", task_id, "dbs")
+        for name in os.listdir(saved_directory):
+            if name.endswith(".jsonl"):
+                shutil.copy(os.path.join(saved_directory, name), os.path.join(task_dbs, name))
+    finally:
+        shutil.rmtree(os.path.join(path_store.experiment_outputs, WORLD_EXPERIMENT), ignore_errors=True)
+
+
+def set_instruction(task_id: str, instruction: str) -> None:
+    """Set the task's instruction in specs.json (what agents are given) and in its supervisor DB task row (what
+    supervisor.show_active_task returns). As in load_policies, the row is changed through AppWorld's models and
+    the SQL it runs is recorded into the task's supervisor DB changes."""
+    task_directory = os.path.join(path_store.data, "tasks", task_id)
+    _update_json(os.path.join(task_directory, "specs.json"), {"instruction": instruction})
+    memory_db_home = f":memory:policy_instruction-{task_id}"
+    models = ModelCollection.load(
+        to_db_home_path=memory_db_home,
+        from_db_home_path=os.path.join(task_directory, "dbs"),
+        load_apps=["supervisor"],
+    )
+    try:
+        tracker = models.supervisor.Task.db.tracker
+        num_old_changes = len(tracker.changes)
+        (task,) = models.supervisor.Task.all()
+        task.instruction = instruction
+        task.save()
+        new_changes = tracker.changes[num_old_changes:]
+    finally:
+        CachedDBHandler.reset(key_substring=memory_db_home)
+    with open(os.path.join(task_directory, "dbs", "supervisor.jsonl"), "a") as file:
+        for change in new_changes:
+            file.write(orjson.dumps(change).decode() + "\n")
 
 
 def build_version(scenario: Scenario, version: Version, source_task_id: str) -> str:
@@ -89,10 +132,23 @@ def build_version(scenario: Scenario, version: Version, source_task_id: str) -> 
     task_directory = os.path.join(tasks_directory, task_id)
     shutil.rmtree(task_directory, ignore_errors=True)
     shutil.copytree(os.path.join(tasks_directory, source_task_id), task_directory)
+    try:
+        fill_version(scenario, version, task_id)
+    except BaseException:
+        shutil.rmtree(task_directory, ignore_errors=True)  # never leave a half-built task (it has the base grader)
+        raise
+    return task_id
+
+
+def fill_version(scenario: Scenario, version: Version, task_id: str) -> None:
+    """Turn the copy of the source task at data/tasks/<task_id> into the version's task."""
+    task_directory = os.path.join(path_store.data, "tasks", task_id)
+    if version.world_setup:  # this version's own world changes, on top of the shared ones
+        apply_world_setup(task_id, version.world_setup)
 
     instruction = version.instruction or scenario.instruction
     if instruction:
-        _update_json(os.path.join(task_directory, "specs.json"), {"instruction": instruction})
+        set_instruction(task_id, instruction)
 
     load_policies(
         task_id,
@@ -115,18 +171,18 @@ def build_version(scenario: Scenario, version: Version, source_task_id: str) -> 
         "scenario": scenario.name,
         "version": version.number,
         "expected": version.expected,
-        "conflicts": version.conflicts,
+        "conflicts": [asdict(conflict) for conflict in version.conflicts],
         "policies": [
-            {"key": policy.key, "owner": owner, "role": policy.role, "text": policy.text}
+            {"key": policy.key, "owner": owner, "relevance": policy.relevance, "level": policy.level,
+             "text": policy.text}
             for owner, policy in policies_of(version)
         ],
     }
     for name, content in [("private_data.json", private_data), ("public_data.json", {}),
-                          ("answer.json", scenario.answer), ("test_data.json", None)]:
+                          ("answer.json", scenario.answer_of(version)), ("test_data.json", None)]:
         with open(os.path.join(ground_truth, name), "w") as file:
             json.dump(content, file, indent=4)
     _update_json(os.path.join(ground_truth, "metadata.json"), {"mode": "minimal"})
-    return task_id
 
 
 def write_datasets() -> dict[str, list[str]]:
