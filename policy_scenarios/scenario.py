@@ -1,7 +1,11 @@
 """What a policy scenario is: one AppWorld task turned into up to 4 task versions that differ in their policies.
 
-A scenario file (policy_scenarios/scenarios/<name>/scenario.py) defines `SCENARIO = Scenario(...)`, next to
-its grader (evaluation.py). policy_scenarios/build.py turns it into the tasks <name>_1 ... <name>_4.
+A scenario file (policy_scenarios/scenarios/s<setting>/<name>/scenario.py) defines `SCENARIO = Scenario(...)`,
+next to its grader (evaluation.py). policy_scenarios/build.py turns it into the tasks s<setting><name>_1 ... _4.
+
+Settings (see policy_scenarios/settings.py): 1 = the user's and other people's policies plus the app companies' own
+rules; 2 = only people's policies (the user's and others'), each general or for one app; 3 = like 2, but the
+policies do not change what counts as task success.
 
 Terms (agreed with the user):
 - relevant policy: it applies to the task; irrelevant policy: it does not (the task never touches what it is about,
@@ -14,8 +18,10 @@ Terms (agreed with the user):
   all, some or none of the earlier versions' policies.
 - Design goal: tasks that are tricky for agents but realistic, so results show real performance.
 - Contradiction: two rules that cannot both be followed. The designer decides which rule wins and which is
-  overridden, by precedence: app policy > (user policy = other people's policies) > task instruction. A tie is
-  the user's policy vs another person's; either may win. A rule can be overridden only in part (see `scope`).
+  overridden. Setting 1 checks precedence: app policy > (user policy = other people's policies) > task instruction;
+  a tie is the user's policy vs another person's, and either may win. Settings 2 and 3: a policy always wins over
+  the task instruction, and between two policies the scenario decides. A rule can be overridden only in part
+  (see `scope`).
 
 The grader runs two sets of checks; a task passes only if all of them pass:
 - [TASK] checks (in the scenario's evaluation.py): the job was done exactly right, compared with the version's
@@ -33,7 +39,8 @@ from typing import Any
 RELEVANCE = ("relevant", "irrelevant")
 LEVELS = ("simple", "advanced")
 INSTRUCTION = "instruction"  # stands for the task instruction in a Conflict
-OWNER_RANK = {"app": 3, "user": 2, "person": 2, INSTRUCTION: 1}  # precedence: higher wins
+OWNER_RANK = {"app": 3, "user": 2, "person": 2, INSTRUCTION: 1}  # setting 1's precedence: higher wins
+SETTING_NUMBERS = (1, 2, 3)
 SCENARIO_ANSWER = "<the scenario's answer>"  # a version's default answer: the same as the scenario's
 
 
@@ -43,6 +50,7 @@ class Policy:
     text: str  # what the agent reads through the policy APIs
     relevance: str  # one of RELEVANCE; never shown to the agent
     level: str  # one of LEVELS; never shown to the agent
+    app: str | None = None  # settings 2 and 3: the app a user's or person's policy is for; None = a general policy
 
 
 @dataclass(frozen=True)
@@ -62,7 +70,7 @@ class Version:
     expected: dict[str, Any]
     supervisor_policies: list[Policy] = field(default_factory=list)
     people_policies: dict[str, list[Policy]] = field(default_factory=dict)  # by email
-    app_policies: dict[str, list[Policy]] = field(default_factory=dict)  # by app name
+    app_policies: dict[str, list[Policy]] = field(default_factory=dict)  # by app name (setting 1 only)
     instruction: str | None = None  # None: the scenario's instruction
     conflicts: list[Conflict] = field(default_factory=list)
     answer: Any = SCENARIO_ANSWER  # the answer the agent must give in this version (None: no answer)
@@ -73,7 +81,8 @@ class Version:
 
 @dataclass
 class Scenario:
-    name: str  # lowercase letters and digits only; the task ids are <name>_<version number>
+    name: str  # lowercase letters and digits only; the task ids are s<setting><name>_<version number>
+    setting: int  # one of SETTING_NUMBERS; the scenario lives in policy_scenarios/scenarios/s<setting>/<name>/
     base_task_id: str  # an AppWorld train or dev task (these come with a correct solution)
     versions: list[Version]
     instruction: str | None = None  # None: the base task's instruction
@@ -89,6 +98,8 @@ class Scenario:
     def __post_init__(self) -> None:
         if not re.fullmatch(r"[a-z0-9]+", self.name):
             raise ValueError(f"Scenario name {self.name!r} must be lowercase letters and digits only.")
+        if self.setting not in SETTING_NUMBERS:
+            raise ValueError(f"{self.name}: setting must be one of {SETTING_NUMBERS}, got {self.setting!r}.")
         numbers = [version.number for version in self.versions]
         if len(set(numbers)) != len(numbers) or not set(numbers) <= {1, 2, 3, 4}:
             raise ValueError(f"{self.name}: version numbers must be distinct and in 1-4, got {numbers}.")
@@ -105,6 +116,12 @@ class Scenario:
                     raise ValueError(f"{where}: policy {policy.key!r} has unknown relevance {policy.relevance!r}.")
                 if policy.level not in LEVELS:
                     raise ValueError(f"{where}: policy {policy.key!r} has unknown level {policy.level!r}.")
+            if self.setting == 1 and any(policy.app for _, policy in policies_of(version)):
+                raise ValueError(f"{where}: in setting 1, people's policies are general (no app); app rules belong "
+                                 "to the app (app_policies).")
+            if self.setting != 1 and version.app_policies:
+                raise ValueError(f"{where}: setting {self.setting} has no app company policies; give the user's or a "
+                                 "person's policy for an app with Policy(app=...).")
             levels = {policy.level for _, policy in policies_of(version)}
             if version.number == 1 and owners:
                 raise ValueError(f"{where}: version 1 has no policies.")
@@ -123,12 +140,22 @@ class Scenario:
                 keys = [*conflict.winners, *conflict.overridden]
                 if set(keys) - set(owners) - {INSTRUCTION} or not conflict.winners or not conflict.overridden:
                     raise ValueError(f"{where}: bad conflict {conflict}.")
-                rank = {key: OWNER_RANK[owner] for key, owner in {**owners, INSTRUCTION: INSTRUCTION}.items()}
-                if min(rank[key] for key in conflict.winners) < max(rank[key] for key in conflict.overridden):
-                    raise ValueError(f"{where}: in {conflict}, a winner has lower precedence than an overridden rule.")
+                if self.setting == 1:
+                    rank = {key: OWNER_RANK[owner] for key, owner in {**owners, INSTRUCTION: INSTRUCTION}.items()}
+                    if min(rank[key] for key in conflict.winners) < max(rank[key] for key in conflict.overridden):
+                        raise ValueError(f"{where}: in {conflict}, a winner has lower precedence than an overridden "
+                                         "rule.")
+                elif INSTRUCTION in conflict.winners:
+                    raise ValueError(f"{where}: in {conflict}, the task instruction cannot win over a policy.")
 
-    def task_id(self, version: Version) -> str:
-        return f"{self.name}_{version.number}"
+    @property
+    def key(self) -> str:
+        """The scenario's folder under policy_scenarios/scenarios/, e.g. "s1/workdinner"."""
+        return f"s{self.setting}/{self.name}"
+
+    def task_id(self, version: Version | int) -> str:
+        number = version if isinstance(version, int) else version.number
+        return f"s{self.setting}{self.name}_{number}"
 
 
 def owner_type(owner: str) -> str:

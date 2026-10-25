@@ -10,7 +10,7 @@ Every version is also run with a "do nothing" solution (just complete_task), whi
 Each solution runs in a fresh world of the built task (build the scenarios first), is graded with the task's grader,
 and is reported as OK when the verdict and the violated policies are exactly the ones expected.
 
-Usage (from the repo root): .venv/bin/python -m policy_scenarios.validate [scenario_name ...]
+Usage (from the repo root): .venv/bin/python -m policy_scenarios.validate [s<setting>/<name> ...]  (default: all)
 """
 
 import argparse
@@ -22,7 +22,7 @@ from dataclasses import dataclass, field
 
 from appworld.common.path_store import path_store
 
-from policy_scenarios.build import SCENARIOS_DIRECTORY, load_scenario, scenario_names
+from policy_scenarios.build import SCENARIOS_DIRECTORY, load_scenario, scenario_keys
 from policy_scenarios.report import task_report
 
 EXPERIMENT = "policy_scenarios_validate"
@@ -39,11 +39,11 @@ class Solution:
 DO_NOTHING = Solution("do nothing", "apis.supervisor.complete_task()", "job mistake")
 
 
-def load_solutions(name: str) -> tuple[str, dict[int, list[Solution]]]:
-    path = SCENARIOS_DIRECTORY / name / "solutions.py"
+def load_solutions(key: str) -> tuple[str, dict[int, list[Solution]]]:
+    path = SCENARIOS_DIRECTORY / key / "solutions.py"
     if not path.exists():
         return "", {}
-    spec = importlib.util.spec_from_file_location(f"policy_solutions_{name}", path)
+    spec = importlib.util.spec_from_file_location(f"policy_solutions_{key.replace('/', '_')}", path)
     module = importlib.util.module_from_spec(spec)  # type: ignore[arg-type]
     spec.loader.exec_module(module)  # type: ignore[union-attr]
     return module.PRELUDE, module.SOLUTIONS
@@ -61,9 +61,9 @@ def run_solution(task_id: str, prelude: str, solution: Solution) -> dict:
     return task_report(task_id, EXPERIMENT)
 
 
-def validate_scenario(name: str) -> bool:
-    scenario = load_scenario(name)
-    prelude, solutions = load_solutions(name)
+def validate_scenario(key: str) -> bool:
+    scenario = load_scenario(key)
+    prelude, solutions = load_solutions(key)
     all_ok = True
     for version in scenario.versions:
         task_id = scenario.task_id(version)
@@ -86,10 +86,12 @@ def validate_scenario(name: str) -> bool:
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("scenarios", nargs="*", help="scenario names (default: all)")
+    parser.add_argument(
+        "scenarios", nargs="*", help="scenarios as s<setting>/<name>, e.g. s1/workdinner (default: all)"
+    )
     args = parser.parse_args()
     try:
-        results = [validate_scenario(name) for name in args.scenarios or scenario_names()]
+        results = [validate_scenario(key) for key in args.scenarios or scenario_keys()]
     finally:
         shutil.rmtree(os.path.join(path_store.experiment_outputs, EXPERIMENT), ignore_errors=True)
     print("ALL SOLUTIONS GRADED AS EXPECTED" if all(results) else "SOME SOLUTIONS WERE NOT GRADED AS EXPECTED")

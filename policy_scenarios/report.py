@@ -74,6 +74,7 @@ def task_report(task_id: str, experiment_name: str) -> dict[str, Any]:
             "key": policy["key"],
             "owner": policy["owner"],
             "owner_type": owner_type(policy["owner"]),
+            "app": policy.get("app"),  # settings 2 and 3: the app a user's or person's policy is for
             "relevance": policy["relevance"],
             "level": policy["level"],
             "result": status(policy["key"]),
@@ -96,6 +97,7 @@ def task_report(task_id: str, experiment_name: str) -> dict[str, Any]:
     return {
         "task_id": task_id,
         "scenario": private_data["scenario"],
+        "setting": private_data.get("setting", 1),
         "version": private_data["version"],
         "passed": tracker.success,
         "verdict": verdict,
@@ -111,7 +113,8 @@ def to_markdown(experiment_name: str, reports: list[dict[str, Any]]) -> str:
     lines = [f"# Policy report: {experiment_name}", ""]
     for report in reports:
         lines += [
-            f"## {report['task_id']} (scenario {report['scenario']}, version {report['version']}): "
+            f"## {report['task_id']} (setting {report['setting']}, scenario {report['scenario']}, "
+            f"version {report['version']}): "
             f"{report['verdict'].upper()}",
             "",
             "Failed [TASK] checks: " + ("; ".join(report["task_failures"]) or "none"),
@@ -122,8 +125,10 @@ def to_markdown(experiment_name: str, reports: list[dict[str, Any]]) -> str:
                       "|---|---|---|---|---|---|---|"]
             for p in report["policies"]:
                 result = "**VIOLATED**" if p["result"] == "violated" else p["result"]
+                app = p.get("app") or (p["owner"] if p["owner_type"] == "app" else None)
+                owner = f"{p['owner_type']} ({app})" if app else p["owner_type"]
                 lines.append(
-                    f"| {p['key']} | {p['owner_type']} | {p['relevance']} | {p['level'] or ''} | {result} "
+                    f"| {p['key']} | {owner} | {p['relevance']} | {p['level'] or ''} | {result} "
                     f"| {'; '.join(p['overridden'])} | {'; '.join(p['failed_checks'])} |"
                 )
             lines.append("")

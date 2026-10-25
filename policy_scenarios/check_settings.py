@@ -17,7 +17,12 @@ from typing import Any
 from appworld import AppWorld
 from appworld.common.path_store import path_store
 
-from policy_scenarios.settings import APPS_WITH_SHOW_POLICIES, SETTING_1_SUPERVISOR_DOCS, SETTINGS, write_setting_api_docs
+from policy_scenarios.settings import (
+    APPS_WITH_SHOW_POLICIES,
+    SETTING_1_SUPERVISOR_DOCS,
+    SETTINGS,
+    write_setting_api_docs,
+)
 
 BASE_TASK_ID = "22cc237_1"  # a train task
 CHECK_TASK_ID = "psettingcheck_1"
