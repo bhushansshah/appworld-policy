@@ -1,6 +1,6 @@
 """Build the task behind the agent prompt's one-shot example, and check the example against it.
 
-The example (experiments/prompts/policy_react_code_agent/instructions.txt) shows an agent doing a small task
+The example (experiments/prompts/policy_react_code_agent_s1/instructions.txt, setting 1) shows an agent doing a small task
 while following policies. Its outputs were captured by running its code in this task, so the check confirms
 that every example code block still runs without error and that the example really does the task
 (graded by policy_scenarios/prompt_example_evaluation.py). No LLM is used.
@@ -30,11 +30,12 @@ from appworld.common.path_store import path_store
 from appworld.task import Task
 
 from policy_scenarios.load_policies import load_policies
+from policy_scenarios.settings import write_setting_api_docs
 
 BASE_TASK_ID = "692c77d_2"  # a train task of Brenda Smith
 EXAMPLE_TASK_ID = "pexample_1"
 EXPERIMENT_NAME = "policy_scenarios_prompt_example"
-PROMPT_PATH = os.path.join("experiments", "prompts", "policy_react_code_agent", "instructions.txt")
+PROMPT_PATH = os.path.join("experiments", "prompts", "policy_react_code_agent_s1", "instructions.txt")
 INSTRUCTION = (
     'Lindsey texted me a few song recommendations. Add them to my "Blues & Brews: Laid Back Tracks" playlist, '
     "and text her back to let her know which ones I added."
@@ -99,6 +100,7 @@ apis.phone.send_text_message(
         EXAMPLE_TASK_ID,
         {"supervisor": SUPERVISOR_POLICIES, "people": {lindsey.email: LINDSEY_POLICIES}, "apps": APP_POLICIES},
     )
+    write_setting_api_docs(EXAMPLE_TASK_ID, 1)  # the policy API docs agents see in setting 1
 
     # Grader and the data it needs; the base task's solution does not apply any more.
     spotify = _load(EXAMPLE_TASK_ID, "spotify").spotify
