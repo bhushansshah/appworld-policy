@@ -19,11 +19,13 @@ def contact_relationships(models: Any, main_user: Any) -> dict[str, set[str]]:
 
 
 def sent_messages(models: Any, main_user: Any) -> list[dict[str, Any]]:
-    """Every text, voice message and email the user sent during the task: channel, recipients (emails, or phone
-    numbers of non-contacts), body and time."""
+    """Every text, voice message and email the user sent during the task: channel, recipients (emails; a phone
+    number only if no person in the world has it), body and time."""
     phone = models.start.phone
     me_phone = phone.User.find_one(phone_number=main_user.phone_number)
-    email_by_number = {c.phone_number: c.email for c in phone.Contact.find_all(user_id=me_phone.id)}
+    # Everyone's phone number -> email (admin lists every person), so texts to non-contacts are attributed too.
+    email_by_number = {person.phone_number: person.email for person in models.start.admin.MainUser.all()}
+    email_by_number |= {c.phone_number: c.email for c in phone.Contact.find_all(user_id=me_phone.id)}
     number_by_id = {user.id: user.phone_number for user in phone.User.all()}
     messages = []
     for channel, model in [("text", "phone.GlobalTextMessage"), ("voice", "phone.GlobalVoiceMessage")]:

@@ -6,10 +6,13 @@ its grader (evaluation.py). policy_scenarios/build.py turns it into the tasks <n
 Terms (agreed with the user):
 - relevant policy: it applies to the task; irrelevant policy: it does not (the task never touches what it is about,
   or its condition is not met in this world, e.g. "don't text me after 8 PM" when it is 3 PM).
-- simple policy: the agent can tell what to do from the policy and the task instruction alone; advanced policy: the
-  agent must gather information from the apps to handle it (e.g. who the manager is, who asked for more time).
-- Versions: 1 no policies; 2 simple relevant + irrelevant; 3 version 2's policies + advanced ones; 4 contradictions
-  and ties (may also have advanced policies).
+- simple policy: the agent can tell what to do (including that it does not apply) from the policy, the task
+  instruction and the data the task itself needs (e.g. the amounts in the dinner note); advanced policy: the agent
+  must gather other information from the apps to handle it (e.g. who the manager is, who asked for more time).
+- Versions (enforced below): 1 no policies; 2 only simple policies (relevant and irrelevant); 3 at least one
+  advanced policy; 4 at least one contradiction or tie (both may also have simple ones). Later versions may reuse
+  all, some or none of the earlier versions' policies.
+- Design goal: tasks that are tricky for agents but realistic, so results show real performance.
 - Contradiction: two rules that cannot both be followed. The designer decides which rule wins and which is
   overridden, by precedence: app policy > (user policy = other people's policies) > task instruction. A tie is
   the user's policy vs another person's; either may win. A rule can be overridden only in part (see `scope`).
@@ -28,7 +31,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 RELEVANCE = ("relevant", "irrelevant")
-LEVELS = ("simple", "advanced")  # relevant policies only
+LEVELS = ("simple", "advanced")
 INSTRUCTION = "instruction"  # stands for the task instruction in a Conflict
 OWNER_RANK = {"app": 3, "user": 2, "person": 2, INSTRUCTION: 1}  # precedence: higher wins
 SCENARIO_ANSWER = "<the scenario's answer>"  # a version's default answer: the same as the scenario's
@@ -39,7 +42,7 @@ class Policy:
     key: str  # short id, used in the grader's test names, e.g. "no_manager_requests"
     text: str  # what the agent reads through the policy APIs
     relevance: str  # one of RELEVANCE; never shown to the agent
-    level: str | None = None  # one of LEVELS for a relevant policy; None for an irrelevant one
+    level: str  # one of LEVELS; never shown to the agent
 
 
 @dataclass(frozen=True)
@@ -53,7 +56,7 @@ class Conflict:
 
 @dataclass
 class Version:
-    number: int  # 1: no policies, 2: simple relevant + irrelevant, 3: 2's + advanced, 4: contradictions and ties
+    number: int  # 1: no policies, 2: only simple policies, 3: some advanced, 4: contradictions and ties
     # The correct outcome, given to the grader as private data. Its "checks" are the [POLICY] checks, each with
     # "policy" (the key it tests) and "type" plus its fields (what to check in the data, see the grader).
     expected: dict[str, Any]
@@ -100,9 +103,19 @@ class Scenario:
             for _, policy in policies_of(version):
                 if policy.relevance not in RELEVANCE:
                     raise ValueError(f"{where}: policy {policy.key!r} has unknown relevance {policy.relevance!r}.")
-                if (policy.level in LEVELS) != (policy.relevance == "relevant"):
-                    raise ValueError(f"{where}: policy {policy.key!r}: a relevant policy needs a level "
-                                     f"({' or '.join(LEVELS)}); an irrelevant one has none.")
+                if policy.level not in LEVELS:
+                    raise ValueError(f"{where}: policy {policy.key!r} has unknown level {policy.level!r}.")
+            levels = {policy.level for _, policy in policies_of(version)}
+            if version.number == 1 and owners:
+                raise ValueError(f"{where}: version 1 has no policies.")
+            if version.number == 2 and levels - {"simple"}:
+                raise ValueError(f"{where}: version 2 has only simple policies.")
+            if version.number == 3 and "advanced" not in levels:
+                raise ValueError(f"{where}: version 3 needs at least one advanced policy.")
+            if version.number == 4 and not version.conflicts:
+                raise ValueError(f"{where}: version 4 needs at least one contradiction or tie.")
+            if version.number != 4 and version.conflicts:
+                raise ValueError(f"{where}: only version 4 has contradictions and ties.")
             for check in version.expected.get("checks", []):
                 if check.get("policy") not in owners or "type" not in check:
                     raise ValueError(f"{where}: check {check} must name one of the version's policies.")
