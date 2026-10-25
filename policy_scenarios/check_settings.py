@@ -3,7 +3,7 @@
 For each setting, makes a temporary copy of an AppWorld train task, writes the setting's API doc changes into it
 (write_setting_api_docs), and reads the docs the way an agent does (apis.api_docs). No LLM is used. Setting 1 must
 show exactly its saved supervisor docs and every app's show_policies; settings 2 and 3 must show the supervisor
-docs with policy_type and app_name and hide every show_policies, also from search. The copies are deleted at the end.
+docs with a required app_name and hide every show_policies, also from search. The copies are deleted at the end.
 
 Usage (from the repo root): .venv/bin/python -m policy_scenarios.check_settings
 """
@@ -80,9 +80,11 @@ def main() -> None:
                 check(len(listed) == len(APPS_WITH_SHOW_POLICIES), "setting 1: every app lists show_policies", listed)
             else:
                 for api_name, doc in seen["supervisor"].items():
-                    names = [parameter["name"] for parameter in doc["parameters"]]
-                    check({"policy_type", "app_name"} <= set(names),
-                          f"setting {number}: supervisor.{api_name} has policy_type and app_name", names)
+                    required = {parameter["name"]: parameter["required"] for parameter in doc["parameters"]}
+                    expected = {"app_name": True} | ({"email": True} if api_name == "show_person_policies" else {})
+                    check(required == expected,
+                          f"setting {number}: supervisor.{api_name} takes a required app_name (and nothing else new)",
+                          required)
                 check(not listed, f"setting {number}: no app lists show_policies", listed)
                 check(not searched, f"setting {number}: search finds no show_policies", searched)
         check(os.path.getsize(os.path.join(tasks_directory, BASE_TASK_ID, "dbs", "api_docs.jsonl")) == 0,
