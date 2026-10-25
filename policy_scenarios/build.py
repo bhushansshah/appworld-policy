@@ -22,15 +22,12 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
-import orjson
-
-from appworld.apps.lib.models.db import CachedDBHandler
-from appworld.collections.models import ModelCollection
 from appworld.common.path_store import path_store
 from appworld.task import load_task_ids
 
 from policy_scenarios.load_policies import load_policies
 from policy_scenarios.scenario import Scenario, Version, policies_of
+from policy_scenarios.task_db import record_task_changes
 
 SCENARIOS_DIRECTORY = Path(__file__).resolve().parent / "scenarios"
 COMMON_CHECKS = Path(__file__).resolve().parent / "common_checks.py"  # appended to every scenario's grader
@@ -106,24 +103,13 @@ def set_instruction(task_id: str, instruction: str) -> None:
     the SQL it runs is recorded into the task's supervisor DB changes."""
     task_directory = os.path.join(path_store.data, "tasks", task_id)
     _update_json(os.path.join(task_directory, "specs.json"), {"instruction": instruction})
-    memory_db_home = f":memory:policy_instruction-{task_id}"
-    models = ModelCollection.load(
-        to_db_home_path=memory_db_home,
-        from_db_home_path=os.path.join(task_directory, "dbs"),
-        load_apps=["supervisor"],
-    )
-    try:
-        tracker = models.supervisor.Task.db.tracker
-        num_old_changes = len(tracker.changes)
+
+    def change_instruction(models: Any) -> None:
         (task,) = models.supervisor.Task.all()
         task.instruction = instruction
         task.save()
-        new_changes = tracker.changes[num_old_changes:]
-    finally:
-        CachedDBHandler.reset(key_substring=memory_db_home)
-    with open(os.path.join(task_directory, "dbs", "supervisor.jsonl"), "a") as file:
-        for change in new_changes:
-            file.write(orjson.dumps(change).decode() + "\n")
+
+    record_task_changes(task_id, "supervisor", change_instruction)
 
 
 def build_version(scenario: Scenario, version: Version, source_task_id: str) -> str:

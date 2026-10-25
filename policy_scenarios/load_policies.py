@@ -22,10 +22,10 @@ from typing import Any
 import orjson
 
 from appworld.apps import get_all_apps
-from appworld.apps.lib.models.db import CachedDBHandler
-from appworld.collections.models import ModelCollection
 from appworld.common.path_store import path_store
 from appworld.task import load_task_ids
+
+from policy_scenarios.task_db import record_task_changes
 
 POLICY_TABLES = ("person_policies", "app_policies")
 APPWORLD_DATASETS = ("train", "dev", "test_normal", "test_challenge")
@@ -42,54 +42,28 @@ def load_policies(task_id: str, policies: dict[str, Any]) -> None:
     changes_path = os.path.join(task_directory, "dbs", "supervisor.jsonl")
     with open(changes_path) as file:
         original_content = file.read()
-    try:
-        # Drop the task's previous policy lines, then load its supervisor DB (base DB + remaining changes).
-        lines = [line for line in original_content.splitlines() if not _is_policy_change(line)]
-        with open(changes_path, "w") as file:
-            file.write("".join(line + "\n" for line in lines))
-        new_changes = _record_policy_changes(
-            task_id, supervisor_email, supervisor_policies, people_policies, app_policies
-        )
-        with open(changes_path, "a") as file:
-            for change in new_changes:
-                file.write(orjson.dumps(change).decode() + "\n")
-    except BaseException:
-        with open(changes_path, "w") as file:  # leave the task exactly as it was
-            file.write(original_content)
-        raise
-
-
-def _record_policy_changes(
-    task_id: str,
-    supervisor_email: str,
-    supervisor_policies: list[tuple[str | None, str]],
-    people_policies: dict[str, list[tuple[str | None, str]]],
-    app_policies: dict[str, list[str]],
-) -> list[Any]:
-    """Create the policy rows in an in-memory copy of the task's supervisor DB; return the SQL they ran."""
-    memory_db_home = f":memory:policy_loader-{task_id}"
-    models = ModelCollection.load(
-        to_db_home_path=memory_db_home,
-        from_db_home_path=os.path.join(path_store.data, "tasks", task_id, "dbs"),
-        load_apps=["supervisor"],
-    )
-    try:
+    def create_policies(models: Any) -> None:
         for email in people_policies:
             if not models.admin.MainUser.exists(email=email):
                 raise ValueError(f"No person with the email {email!r} exists in AppWorld.")
-        tracker = models.supervisor.PersonPolicy.db.tracker
-        num_old_changes = len(tracker.changes)
         for email, entries in [(supervisor_email, supervisor_policies), *people_policies.items()]:
             for app_name, text in entries:
                 models.supervisor.PersonPolicy.create_save(email=email, app_name_=app_name, policy=text)
         for app_name, texts in app_policies.items():
             for text in texts:
                 models.supervisor.AppPolicy.create_save(app_name_=app_name, policy=text)
-        new_changes = tracker.changes[num_old_changes:]
-    finally:
-        CachedDBHandler.reset(key_substring=memory_db_home)
-    assert all(_is_policy_change(orjson.dumps(change).decode()) for change in new_changes), new_changes
-    return new_changes
+
+    try:
+        # Drop the task's previous policy lines, then add the new ones (on top of the remaining changes).
+        lines = [line for line in original_content.splitlines() if not _is_policy_change(line)]
+        with open(changes_path, "w") as file:
+            file.write("".join(line + "\n" for line in lines))
+        new_changes = record_task_changes(task_id, "supervisor", create_policies)
+        assert all(_is_policy_change(orjson.dumps(change).decode()) for change in new_changes), new_changes
+    except BaseException:
+        with open(changes_path, "w") as file:  # leave the task exactly as it was
+            file.write(original_content)
+        raise
 
 
 def _is_policy_change(line: str) -> bool:
