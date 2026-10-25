@@ -2,11 +2,12 @@
 
 Policies are given as:
     {
-        "supervisor": ["policy", ...],                 # the task's supervisor (the user)
-        "people": {"email": ["policy", ...], ...},     # other people, by email
-        "apps": {"app_name": ["policy", ...], ...},    # apps, e.g. "venmo"
+        "supervisor": [policy, ...],                   # the task's supervisor (the user)
+        "people": {"email": [policy, ...], ...},       # other people, by email
+        "apps": {"app_name": ["policy", ...], ...},    # apps, e.g. "venmo" (the app company's own rules)
     }
-Every key is optional; {} removes all policies from the task.
+A supervisor's or person's policy is either a string (a general policy) or {"app": "venmo", "policy": "..."}
+(their policy for one app). Every key is optional; {} removes all policies from the task.
 
 They are written into data/tasks/<task_id>/dbs/supervisor.jsonl, the task's own changes to the supervisor DB
 (the file that already sets up the supervisor's profile, cards and passwords). As AppWorld does when building
@@ -61,8 +62,8 @@ def load_policies(task_id: str, policies: dict[str, Any]) -> None:
 def _record_policy_changes(
     task_id: str,
     supervisor_email: str,
-    supervisor_policies: list[str],
-    people_policies: dict[str, list[str]],
+    supervisor_policies: list[tuple[str | None, str]],
+    people_policies: dict[str, list[tuple[str | None, str]]],
     app_policies: dict[str, list[str]],
 ) -> list[Any]:
     """Create the policy rows in an in-memory copy of the task's supervisor DB; return the SQL they ran."""
@@ -78,9 +79,9 @@ def _record_policy_changes(
                 raise ValueError(f"No person with the email {email!r} exists in AppWorld.")
         tracker = models.supervisor.PersonPolicy.db.tracker
         num_old_changes = len(tracker.changes)
-        for email, texts in [(supervisor_email, supervisor_policies), *people_policies.items()]:
-            for text in texts:
-                models.supervisor.PersonPolicy.create_save(email=email, policy=text)
+        for email, entries in [(supervisor_email, supervisor_policies), *people_policies.items()]:
+            for app_name, text in entries:
+                models.supervisor.PersonPolicy.create_save(email=email, app_name_=app_name, policy=text)
         for app_name, texts in app_policies.items():
             for text in texts:
                 models.supervisor.AppPolicy.create_save(app_name_=app_name, policy=text)
@@ -98,23 +99,43 @@ def _is_policy_change(line: str) -> bool:
 
 def _validate(
     policies: dict[str, Any], supervisor_email: str
-) -> tuple[list[str], dict[str, list[str]], dict[str, list[str]]]:
+) -> tuple[list[tuple[str | None, str]], dict[str, list[tuple[str | None, str]]], dict[str, list[str]]]:
     unknown_keys = set(policies) - {"supervisor", "people", "apps"}
     if unknown_keys:
         raise ValueError(f"Unknown policy groups: {sorted(unknown_keys)}. Use supervisor, people and apps.")
-    supervisor_policies = _texts(policies.get("supervisor", []), "supervisor")
+    supervisor_policies = _person_entries(policies.get("supervisor", []), "supervisor")
     people_policies = {
-        email: _texts(texts, email) for email, texts in policies.get("people", {}).items()
+        email: _person_entries(entries, email) for email, entries in policies.get("people", {}).items()
     }
     if supervisor_email in people_policies:
         raise ValueError("Give the supervisor's own policies under 'supervisor', not 'people'.")
-    valid_app_names = get_all_apps(skip_admin=True, skip_api_docs=True, skip_supervisor=True)
     app_policies = {}
     for app_name, texts in policies.get("apps", {}).items():
-        if app_name not in valid_app_names:
-            raise ValueError(f"Unknown app {app_name!r}. Valid apps: {', '.join(valid_app_names)}.")
+        _check_app_name(app_name)
         app_policies[app_name] = _texts(texts, app_name)
     return supervisor_policies, people_policies, app_policies
+
+
+def _person_entries(entries: Any, owner: str) -> list[tuple[str | None, str]]:
+    """(app name or None for a general policy, text) for each of a person's policies."""
+    if not isinstance(entries, list):
+        raise ValueError(f"Policies of {owner} must be a list.")
+    result = []
+    for entry in entries:
+        if isinstance(entry, dict):
+            if set(entry) != {"app", "policy"}:
+                raise ValueError(f"An app policy of {owner} must have exactly the keys 'app' and 'policy': {entry}")
+            _check_app_name(entry["app"])
+            result.append((entry["app"], _texts([entry["policy"]], owner)[0]))
+        else:
+            result.append((None, _texts([entry], owner)[0]))
+    return result
+
+
+def _check_app_name(app_name: Any) -> None:
+    valid_app_names = get_all_apps(skip_admin=True, skip_api_docs=True, skip_supervisor=True)
+    if app_name not in valid_app_names:
+        raise ValueError(f"Unknown app {app_name!r}. Valid apps: {', '.join(valid_app_names)}.")
 
 
 def _texts(texts: Any, owner: str) -> list[str]:

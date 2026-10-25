@@ -25,7 +25,9 @@ BASE_TASK_ID = "22cc237_1"  # a train task, so it comes with a correct solution
 CHECK_TASK_ID = "ploadcheck_1"
 EXPERIMENT_NAME = "policy_scenarios_check"
 SUPERVISOR_POLICIES = ["Never ask my manager for money.", "Keep all my Venmo payments private."]
+SUPERVISOR_APP_POLICIES = {"venmo": ["On Venmo, always say what a payment is for."]}
 PERSON_POLICIES = ["Do not send me payment requests; I pay in cash."]
+PERSON_APP_POLICIES = {"phone": ["Do not text me after 9 PM."]}
 APP_POLICIES = {
     "venmo": ["Every payment and payment request must include a note.", "Request only the exact amount owed."],
     "phone": ["Do not send text messages between 10 PM and 8 AM."],
@@ -73,9 +75,12 @@ def main() -> None:
                 "SELECT email FROM main_users WHERE email != ? ORDER BY id LIMIT 2", (supervisor_email,)
             )
         ]
+    def with_app_policies(general: list[str], by_app: dict[str, list[str]]) -> list[Any]:
+        return general + [{"app": app, "policy": text} for app, app_texts in by_app.items() for text in app_texts]
+
     policies = {
-        "supervisor": SUPERVISOR_POLICIES,
-        "people": {person_email: PERSON_POLICIES},
+        "supervisor": with_app_policies(SUPERVISOR_POLICIES, SUPERVISOR_APP_POLICIES),
+        "people": {person_email: with_app_policies(PERSON_POLICIES, PERSON_APP_POLICIES)},
         "apps": APP_POLICIES,
     }
 
@@ -95,6 +100,8 @@ def main() -> None:
             "an unknown person": {"people": {"nobody@nowhere.com": ["x"]}},
             "an empty policy": {"supervisor": [" "]},
             "the supervisor under 'people'": {"people": {supervisor_email: ["x"]}},
+            "an app policy for an unknown app": {"supervisor": [{"app": "not_an_app", "policy": "x"}]},
+            "an app policy with wrong keys": {"supervisor": [{"app": "venmo", "text": "x"}]},
         }
         for name, bad_policies in bad_inputs.items():
             try:
@@ -122,6 +129,29 @@ def main() -> None:
             check(result == SUPERVISOR_POLICIES, "show_person_policies works for the supervisor's email", result)
             result = call(world, "apis.supervisor.show_person_policies(email='nobody@nowhere.com')")
             check("No person with this email address exists." in str(result), "unknown email gives an error", result)
+            # General vs app policies (settings 2 and 3); the default is general, as above.
+            for expression, expected, what in [
+                ("show_my_policies(policy_type='general')", SUPERVISOR_POLICIES, "my general policies"),
+                ("show_my_policies(policy_type='app', app_name='venmo')", SUPERVISOR_APP_POLICIES["venmo"],
+                 "my Venmo policies"),
+                ("show_my_policies(policy_type='app', app_name='spotify')", [], "[] for an app without my policies"),
+                (f"show_person_policies(email='{person_email}', policy_type='app', app_name='phone')",
+                 PERSON_APP_POLICIES["phone"], "that person's Phone policies"),
+                (f"show_person_policies(email='{person_email}', policy_type='general')", PERSON_POLICIES,
+                 "that person's general policies"),
+            ]:
+                result = texts(call(world, f"apis.supervisor.{expression}"))
+                check(result == expected, f"{expression.split('(')[0]} returns {what}", result)
+            for expression, error, what in [
+                ("show_my_policies(policy_type='app')", "Give app_name", "app policies without app_name"),
+                ("show_my_policies(app_name='venmo')", "Leave app_name empty", "app_name with general policies"),
+                ("show_my_policies(policy_type='app', app_name='not_an_app')", "No app named", "an unknown app"),
+                ("show_my_policies(policy_type='everything')", "policy_type", "an unknown policy_type"),
+                (f"show_person_policies(email='{person_email}', policy_type='app')", "Give app_name",
+                 "a person's app policies without app_name"),
+            ]:
+                result = call(world, f"apis.supervisor.{expression}")
+                check(error in str(result), f"error for {what}", result)
             for app_name in get_all_apps(skip_admin=True, skip_api_docs=True, skip_supervisor=True):
                 result = texts(call(world, f"apis.{app_name}.show_policies()"))
                 expected = APP_POLICIES.get(app_name, [])
