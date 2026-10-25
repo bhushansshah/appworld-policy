@@ -3,7 +3,8 @@
 Run once after `appworld download data`, and again whenever an API changes. Safe to re-run.
 
 1. Add the (empty) policy tables to data/base_dbs/supervisor.db. Tasks load base DBs without creating
-   tables, so the tables must exist there; each task then inserts its own policies.
+   tables, so the tables must exist there; each task then inserts its own policies. A policy table made by
+   an older version of the code (missing a column) is recreated; it is empty in the base DB.
 2. Regenerate the API docs files (data/api_docs/<format>/<app>.json) from the code, with AppWorld's
    generate/code/api_docs.py. Existing APIs keep their order; new APIs are added at the end.
 3. Sync the API docs DB (data/base_dbs/api_docs.db), which agents read through apis.api_docs, with the code:
@@ -21,7 +22,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from sqlalchemy import create_engine, inspect
+from sqlalchemy import create_engine, inspect, text
 
 from appworld.api_docs import prepare_api_docs
 from appworld.apps import get_all_apps
@@ -34,6 +35,18 @@ def add_policy_tables() -> None:
     from appworld.apps.supervisor import models as supervisor_models
 
     engine = create_engine(f"sqlite:///{BASE_DBS / 'supervisor.db'}")
+    existing_tables = inspect(engine).get_table_names()
+    with engine.begin() as connection:
+        for model in (supervisor_models.PersonPolicy, supervisor_models.AppPolicy):
+            table = model.__table__
+            if table.name not in existing_tables:
+                continue
+            existing_columns = {column["name"] for column in inspect(connection).get_columns(table.name)}
+            if existing_columns != set(table.columns.keys()):
+                count = connection.execute(text(f"SELECT COUNT(*) FROM {table.name}")).scalar()
+                assert count == 0, f"{table.name} in the base DB should be empty, it has {count} rows"
+                connection.execute(text(f"DROP TABLE {table.name}"))
+                print(f"supervisor.db: recreating {table.name} (columns changed)")
     supervisor_models.SQLModel.metadata.create_all(engine)  # creates only the missing tables
     tables = inspect(engine).get_table_names()
     engine.dispose()
