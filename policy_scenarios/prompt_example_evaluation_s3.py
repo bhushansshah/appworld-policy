@@ -15,7 +15,10 @@ from appworld.collections.models import ModelCollectionPair
 from appworld.common.types import AnswerType
 from appworld.evaluator import TestTracker
 
-LINK = re.compile(r"https?://|www\.|\b[\w-]+\.(?:com|net|org|co|io)\b", re.IGNORECASE)
+# A link: a URL, "www.", a bare domain with a common ending (spotify.com), or any domain with a path (bit.ly/x). The
+# part after "@" in an email address is not a link.
+LINK = re.compile(r"https?://|www\.|(?<![@\w.-])(?:[\w-]+\.)+(?:(?:com|net|org|co|io|me|us|ly|to|gl|app)\b|[a-z]{2,}/\S)",
+                  re.IGNORECASE)
 
 
 def evaluate(
