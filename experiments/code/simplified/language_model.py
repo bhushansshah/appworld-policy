@@ -521,6 +521,19 @@ def chat_completion_to_responses_input(
     return responses_kwargs
 
 
+def with_responses_message_text(items: list[dict[str, Any]], text: str) -> list[dict[str, Any]]:
+    """The reply's raw responses items with all its message items replaced by one message item holding text, so the
+    history replays what the agent kept of the reply (other items, like reasoning, stay as they are)."""
+    message_items = [item for item in items if item["type"] == "message"]
+    if not message_items:
+        return items
+    first = message_items[0]
+    kept_message = {**first, "content": [{**first["content"][0], "text": text}]}
+    updated_items = [item for item in items if item["type"] != "message"]
+    updated_items.insert(items.index(first), kept_message)
+    return updated_items
+
+
 @validate_call
 def responses_to_chat_completion_output(response: dict[str, Any]) -> dict[str, Any]:
     # NOTE: https://cookbook.openai.com/examples/reasoning_function_calls
@@ -545,8 +558,10 @@ def responses_to_chat_completion_output(response: dict[str, Any]) -> dict[str, A
                 reasoning_content_id = item["id"]
                 reasoning_status = item["status"]
         elif item["type"] == "message":
-            content = "\n".join([e["text"] for e in item["content"]])
-            content_id = item["id"]
+            # One reply can come as several message items; keep all of them, in order (not just the last).
+            item_content = "\n".join([e["text"] for e in item["content"]])
+            content = content + "\n" + item_content if content else item_content
+            content_id = content_id or item["id"]
             status = item["status"]
         elif item["type"] == "function_call":
             tool_calls.append(

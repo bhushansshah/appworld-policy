@@ -11,6 +11,7 @@ from appworld import AppWorld
 from appworld.common.io import read_file
 from appworld_agents.code.common.usage_tracker import Usage
 from appworld_agents.code.simplified.agent import Agent, ExecutionIO, Status
+from appworld_agents.code.simplified.language_model import with_responses_message_text
 
 
 @Agent.register("simplified_react_code_agent")
@@ -75,6 +76,10 @@ class SimplifiedReActCodeAgent(Agent):  # type: ignore[misc]
         raw_message = copy.deepcopy(output)
         code, fixed_output_content = self.extract_code_and_fix_content(output["content"] or "")
         output["content"] = fixed_output_content + "\n\n"
+        if output.get("_raw_responses_items"):  # replay only what was kept (the code after the first block never ran)
+            output["_raw_responses_items"] = with_responses_message_text(
+                output["_raw_responses_items"], output["content"]
+            )
         self.messages.append(
             output
         )  # NOTE: output should be appended as is, so Claude's thinking is passed back.
