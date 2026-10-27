@@ -4,8 +4,9 @@ A scenario file (policy_scenarios/scenarios/s<setting>/<name>/scenario.py) defin
 next to its grader (evaluation.py). policy_scenarios/build.py turns it into the tasks s<setting><name>_1 ... _4.
 
 Settings (see policy_scenarios/settings.py): 1 = the user's and other people's policies plus the app companies' own
-rules; 2 = only people's policies (the user's and others'), each general or for one app; 3 = like 2, but the
-policies do not change what counts as task success.
+rules; 2 = only people's policies (the user's and others'), each for one app; 3 = like 2, but people can also have
+general policies (not tied to any app), and the policies do not change what counts as task success (they only choose
+among the task's correct end states, so a policy never conflicts with the task instruction).
 
 Terms (agreed with the user):
 - relevant policy: it applies to the task; irrelevant policy: it does not (the task never touches what it is about,
@@ -122,6 +123,8 @@ class Scenario:
             if self.setting != 1 and version.app_policies:
                 raise ValueError(f"{where}: setting {self.setting} has no app company policies; give the user's or a "
                                  "person's policy for an app with Policy(app=...).")
+            if self.setting == 2 and any(not policy.app for _, policy in policies_of(version)):
+                raise ValueError(f"{where}: in setting 2, every policy belongs to one app (Policy(app=...)).")
             levels = {policy.level for _, policy in policies_of(version)}
             if version.number == 1 and owners:
                 raise ValueError(f"{where}: version 1 has no policies.")
@@ -145,6 +148,9 @@ class Scenario:
                     if min(rank[key] for key in conflict.winners) < max(rank[key] for key in conflict.overridden):
                         raise ValueError(f"{where}: in {conflict}, a winner has lower precedence than an overridden "
                                          "rule.")
+                elif self.setting == 3 and INSTRUCTION in keys:
+                    raise ValueError(f"{where}: in {conflict}, setting 3's policies only choose among correct end "
+                                     "states, so they never conflict with the task instruction.")
                 elif INSTRUCTION in conflict.winners:
                     raise ValueError(f"{where}: in {conflict}, the task instruction cannot win over a policy.")
 

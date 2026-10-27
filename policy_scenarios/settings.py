@@ -6,7 +6,9 @@
   or, if it involves several apps, the app where the action that sets it off happens. All are read through the
   supervisor app, one app at a time (app_name, required); the apps' show_policies APIs are hidden. Policies change
   what the correct end state is.
-- Setting 3: the same policies and APIs as setting 2, but the policies do not change what counts as task success.
+- Setting 3: like setting 2, but a person can also have general policies (not tied to any app), read through the same
+  APIs without app_name (so app_name is optional). The policies do not change what counts as task success; they
+  only choose among the task's correct end states.
 
 The code has every policy API; what the agent sees differs only by setting. AppWorld lets each task change the
 API docs (data/tasks/<task_id>/dbs/api_docs.jsonl, on top of data/base_dbs/api_docs.db, which is generated from
@@ -43,8 +45,9 @@ SETTING_1_SUPERVISOR_DOCS = {
     },
 }
 APPS_WITH_SHOW_POLICIES = get_all_apps(skip_admin=True, skip_api_docs=True, skip_supervisor=True)
-# Settings 2 and 3: the supervisor policy docs as generated from the code, but with app_name required (every policy
-# belongs to one app; without app_name the API returns the general policies, which these settings do not have).
+EMAIL_PARAMETER = SETTING_1_SUPERVISOR_DOCS["show_person_policies"]["parameters"][0]
+# Setting 2: the supervisor policy docs as generated from the code, but with app_name required (every policy belongs
+# to one app; without app_name the API returns the general policies, which this setting does not have).
 APP_NAME_PARAMETER = {
     "name": "app_name",
     "type": "string",
@@ -55,8 +58,24 @@ APP_NAME_PARAMETER = {
 }
 APP_POLICY_SUPERVISOR_DOCS = {
     "show_my_policies": {"parameters": [APP_NAME_PARAMETER]},
+    "show_person_policies": {"parameters": [EMAIL_PARAMETER, APP_NAME_PARAMETER]},
+}
+# Setting 3: general policies too, so app_name is optional (left out: the general policies).
+OPTIONAL_APP_NAME_PARAMETER = APP_NAME_PARAMETER | {
+    "required": False,
+    "description": 'The app to show the policies for, e.g. "venmo". Leave it out to show the general policies, '
+                   "which are not tied to any app.",
+}
+GENERAL_AND_APP_POLICY_SUPERVISOR_DOCS = {
+    "show_my_policies": {
+        "description": "Show your supervisor's policies, i.e., the rules they set for you to follow: their general "
+                       "policies, or, with app_name, their policies for one app.",
+        "parameters": [OPTIONAL_APP_NAME_PARAMETER],
+    },
     "show_person_policies": {
-        "parameters": [SETTING_1_SUPERVISOR_DOCS["show_person_policies"]["parameters"][0], APP_NAME_PARAMETER]
+        "description": "Show another person's policies, i.e., the rules they want followed by anyone acting on them: "
+                       "their general policies, or, with app_name, their policies for one app.",
+        "parameters": [EMAIL_PARAMETER, OPTIONAL_APP_NAME_PARAMETER],
     },
 }
 
@@ -75,9 +94,9 @@ SETTINGS = {
         number: Setting(
             number,
             hidden_apis=[(app, "show_policies") for app in APPS_WITH_SHOW_POLICIES],
-            replaced_docs={("supervisor", api): doc for api, doc in APP_POLICY_SUPERVISOR_DOCS.items()},
+            replaced_docs={("supervisor", api): doc for api, doc in docs.items()},
         )
-        for number in (2, 3)
+        for number, docs in [(2, APP_POLICY_SUPERVISOR_DOCS), (3, GENERAL_AND_APP_POLICY_SUPERVISOR_DOCS)]
     },
 }
 

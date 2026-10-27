@@ -2,8 +2,9 @@
 
 For each setting, makes a temporary copy of an AppWorld train task, writes the setting's API doc changes into it
 (write_setting_api_docs), and reads the docs the way an agent does (apis.api_docs). No LLM is used. Setting 1 must
-show exactly its saved supervisor docs and every app's show_policies; settings 2 and 3 must show the supervisor
-docs with a required app_name and hide every show_policies, also from search. The copies are deleted at the end.
+show exactly its saved supervisor docs and every app's show_policies; settings 2 and 3 must hide every show_policies,
+also from search, and show the supervisor docs with app_name: required in setting 2, optional in setting 3 (left out,
+the APIs return the general policies, which only setting 3 has). The copies are deleted at the end.
 
 Usage (from the repo root): .venv/bin/python -m policy_scenarios.check_settings
 """
@@ -81,10 +82,14 @@ def main() -> None:
             else:
                 for api_name, doc in seen["supervisor"].items():
                     required = {parameter["name"]: parameter["required"] for parameter in doc["parameters"]}
-                    expected = {"app_name": True} | ({"email": True} if api_name == "show_person_policies" else {})
+                    expected = {"app_name": number == 2} | ({"email": True} if api_name == "show_person_policies" else {})
                     check(required == expected,
-                          f"setting {number}: supervisor.{api_name} takes a required app_name (and nothing else new)",
-                          required)
+                          f"setting {number}: supervisor.{api_name} takes an app_name, "
+                          f"{'required' if number == 2 else 'optional'} (and nothing else new)", required)
+                    mentions_general = "general" in doc["description"]
+                    check(mentions_general == (number == 3),
+                          f"setting {number}: supervisor.{api_name}'s description "
+                          f"{'mentions' if number == 3 else 'does not mention'} general policies", doc["description"])
                 check(not listed, f"setting {number}: no app lists show_policies", listed)
                 check(not searched, f"setting {number}: search finds no show_policies", searched)
         check(os.path.getsize(os.path.join(tasks_directory, BASE_TASK_ID, "dbs", "api_docs.jsonl")) == 0,
