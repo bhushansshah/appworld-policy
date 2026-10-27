@@ -31,11 +31,12 @@ without `app_name`), and policies only choose among the task's correct end state
 
 ## The design (what the code must match)
 
-The design is the scenario's tab in the Claude doc "Policy Benchmark Scenarios"
-(https://claude.ai/artifact/PQWSpNLiMSC69cpa1ngzrt). If you have Claude Docs tools, read that tab (it can be long:
-read it in parts). If not, or if the caller gave you the design another way, use that, and say which you used. The
-docstring and comments of `scenario.py` are the second source; any difference between the doc and the code is a
-finding.
+The design is in the Claude doc "Policy Benchmark Scenarios" (https://claude.ai/artifact/PQWSpNLiMSC69cpa1ngzrt):
+its **Study design** tab says what the settings are, how scenarios are built and how each setting is evaluated; the
+**scenario's own tab** (e.g. "Setting 3: Water bottle gift") gives that scenario's world, versions, policies and
+correct outcomes. If you have Claude Docs tools, read both tabs (they can be long: read them in parts). If not, or
+if the caller gave you the design another way, use that, and say which you used. The docstring and comments of
+`scenario.py` are the second source; any difference between the doc and the code is a finding.
 
 ## Read first
 
