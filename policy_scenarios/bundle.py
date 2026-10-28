@@ -1,12 +1,12 @@
-"""Keep the scenario files encrypted in git.
+"""Keep the scenario and single task files encrypted in git.
 
-Scenario files contain AppWorld data (names, emails, amounts), which may only be shared publicly in encrypted
-form. So policy_scenarios/scenarios/ is git-ignored and committed as the encrypted bundle
-policy_scenarios/.source/scenarios.bundle, the same way AppWorld ships its own task generators.
+Scenario and task files contain AppWorld data (names, emails, amounts), which may only be shared publicly in
+encrypted form. So policy_scenarios/scenarios/ and policy_scenarios/tasks/ are git-ignored and committed as the
+encrypted bundle policy_scenarios/.source/scenarios.bundle, the same way AppWorld ships its own task generators.
 
 Usage (from the repo root):
-    .venv/bin/python -m policy_scenarios.bundle unpack   # bundle -> policy_scenarios/scenarios/ (after cloning)
-    .venv/bin/python -m policy_scenarios.bundle pack     # policy_scenarios/scenarios/ -> bundle (before committing)
+    .venv/bin/python -m policy_scenarios.bundle unpack   # bundle -> the two folders (after cloning)
+    .venv/bin/python -m policy_scenarios.bundle pack     # the two folders -> bundle (before committing)
     .venv/bin/python -m policy_scenarios.bundle check    # fails if the bundle and the folder differ
 """
 
@@ -18,14 +18,15 @@ from appworld.common.constants import PASSWORD, SALT
 from appworld.common.crypto import bundle_file_path_to_content, pack_bundle, unpack_bundle
 
 BASE_DIRECTORY = Path(__file__).resolve().parent
-SCENARIOS = "scenarios"
+FOLDERS = ["scenarios", "tasks"]  # under policy_scenarios/
 BUNDLE_PATH = BASE_DIRECTORY / ".source" / "scenarios.bundle"
 
 
 def folder_content() -> dict[str, str]:
     return {
         str(path.relative_to(BASE_DIRECTORY)): path.read_text()
-        for path in sorted((BASE_DIRECTORY / SCENARIOS).rglob("*"))
+        for folder in FOLDERS
+        for path in sorted((BASE_DIRECTORY / folder).rglob("*"))
         if path.is_file() and "__pycache__" not in path.parts and not path.name.startswith(".")
     }
 
@@ -38,7 +39,7 @@ def bundle_content() -> dict[str, str]:
 
 def pack() -> None:
     # Encryption gives different bytes each time, so only rewrite the bundle when the files changed.
-    pack_bundle(str(BUNDLE_PATH) + ".new", str(BASE_DIRECTORY), [SCENARIOS], PASSWORD, SALT)
+    pack_bundle(str(BUNDLE_PATH) + ".new", str(BASE_DIRECTORY), FOLDERS, PASSWORD, SALT)
     new_bundle = Path(str(BUNDLE_PATH) + ".new")
     if bundle_file_path_to_content(str(new_bundle), PASSWORD, SALT) == bundle_content():
         new_bundle.unlink()
@@ -50,19 +51,19 @@ def pack() -> None:
 
 def unpack() -> None:
     file_paths = unpack_bundle(str(BUNDLE_PATH), str(BASE_DIRECTORY), PASSWORD, SALT)
-    print(f"Unpacked {len(file_paths)} files into {(BASE_DIRECTORY / SCENARIOS).relative_to(BASE_DIRECTORY.parent)}.")
+    print(f"Unpacked {len(file_paths)} files into {', '.join(f'policy_scenarios/{folder}/' for folder in FOLDERS)}.")
 
 
 def check() -> bool:
     in_bundle, in_folder = bundle_content(), folder_content()
     if in_bundle == in_folder:
-        print("The bundle and the scenario files match.")
+        print("The bundle and the scenario and task files match.")
         return True
     for path in sorted(set(in_bundle) | set(in_folder)):
         if in_bundle.get(path) != in_folder.get(path):
             where = "only in the folder" if path not in in_bundle else "only in the bundle" if path not in in_folder else "differs"
             print(f"  {path}: {where}")
-    print("The bundle and the scenario files differ. Run pack (to save the folder) or unpack (to restore it).")
+    print("The bundle and the scenario and task files differ. Run pack (to save the folder) or unpack (to restore it).")
     return False
 
 
