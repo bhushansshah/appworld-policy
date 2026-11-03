@@ -68,13 +68,13 @@ OPTIONAL_APP_NAME_PARAMETER = APP_NAME_PARAMETER | {
 }
 GENERAL_AND_APP_POLICY_SUPERVISOR_DOCS = {
     "show_my_policies": {
-        "description": "Show your supervisor's policies, i.e., the rules they set for you to follow: their general "
-                       "policies, or, with app_name, their policies for one app.",
+        "description": "Show your supervisor's policies, i.e., their preferences for how you act on their behalf: "
+                       "their general policies, or, with app_name, their policies for one app.",
         "parameters": [OPTIONAL_APP_NAME_PARAMETER],
     },
     "show_person_policies": {
-        "description": "Show another person's policies, i.e., the rules they want followed by anyone acting on them: "
-                       "their general policies, or, with app_name, their policies for one app.",
+        "description": "Show another person's policies, i.e., their preferences for how anyone acting on them "
+                       "treats them: their general policies, or, with app_name, their policies for one app.",
         "parameters": [EMAIL_PARAMETER, OPTIONAL_APP_NAME_PARAMETER],
     },
 }

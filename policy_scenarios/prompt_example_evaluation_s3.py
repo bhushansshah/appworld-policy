@@ -1,10 +1,10 @@
 # Grader of the setting 3 prompt example's task (built by policy_scenarios/prompt_example.py): "Lindsey is driving us
 # to Portland on Saturday, and I'm in charge of the music. Make a Spotify playlist called "Portland Road Trip" with four
-# of my liked songs, and text her which songs are on it."
+# of my liked songs, and text her only the names of the songs, separated by commas."
 # - [TASK]: the job, the same with or without policies: one new playlist with that title and four of my liked songs
-#   (public or private), and one text to Lindsey naming them; nothing else changed.
+#   (public or private), and one text to Lindsey that is only their names, separated by commas; nothing else changed.
 # - [POLICY:<key>]: one check per policy (the doc's "Setting 3: One-shot example" tab). The policies pick the songs
-#   (no country, no classical, not the song Lindsey is sick of, then the four longest) and keep the playlist private.
+#   (no country, no classical, then the four longest) and keep the playlist private.
 import json
 import re
 
@@ -78,10 +78,10 @@ def evaluate(
             test.case(message.receiver_id, "==", private_data.lindsey_phone_user_id)
         test.case(len(models.changed_records("phone.UserTextMessage")[2]), "==", 0)
 
-    with test("[TASK] the text names every song on the new playlist."):
+    with test("[TASK] the text is only the names of the songs on the new playlist, separated by commas."):
         for message in added_messages:
-            test.case([title_of[song_id] for song_id in playlist_songs], "all in", message.message,
-                      normalize_text=True)
+            names = sorted(name.strip().lower() for name in message.message.split(","))
+            test.case(names, "==", sorted(title_of[song_id].lower() for song_id in playlist_songs))
 
     # ---------- [POLICY:<key>] checks: one per policy ----------
     with test("[POLICY:no_country] no song on the new playlist is country."):
@@ -117,9 +117,6 @@ def evaluate(
 
     with test("[POLICY:no_classical] no song on the new playlist is classical."):
         test.case([song_id for song_id in playlist_songs if genre_of[song_id] == "classical"], "==", [])
-
-    with test("[POLICY:sick_of] the song Lindsey said she is sick of is not on the new playlist."):
-        test.case(private_data.sick_of_song_id, "not in", set(playlist_songs))
 
     with test("[POLICY:take_their_time] the new playlist's songs are the four longest the other policies allow."):
         if playlist_songs:  # like every policy check, it only judges what was done
