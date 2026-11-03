@@ -32,6 +32,7 @@ from policy_scenarios.settings import write_setting_api_docs
 from policy_scenarios.task_spec import Task, check_task
 
 TASKS_DIRECTORY = Path(__file__).resolve().parent / "tasks"
+BASE_TASK_SPLITS = ["train", "dev", "test_normal", "test_challenge"]
 
 
 def task_keys() -> list[str]:
@@ -74,8 +75,8 @@ def build_task(key: str) -> str:
     check_task(task, setting, task_id)
     if (SCENARIOS_DIRECTORY / f"s{setting}" / name).exists():
         raise ValueError(f"{key}: a scenario has the same name, so their task ids would clash; rename the task.")
-    if task.base_task_id not in load_task_ids("train") + load_task_ids("dev"):
-        raise ValueError(f"{key}: the base task must be a train or dev task (not test).")
+    if task.base_task_id not in sum((load_task_ids(split) for split in BASE_TASK_SPLITS), []):
+        raise ValueError(f"{key}: the base task must be an AppWorld task ({', '.join(BASE_TASK_SPLITS)}).")
 
     # 1. Copy the base task's folder: its world (dbs/), instruction and user (specs.json) and grader (ground_truth/).
     task_directory = os.path.join(path_store.data, "tasks", task_id)
@@ -104,12 +105,25 @@ def build_task(key: str) -> str:
         write_setting_api_docs(task_id, setting)
 
         # 6. Replace the base task's solution and grader with ours: evaluation.py followed by the checks shared by
-        # all scenarios and tasks (policy_scenarios/common_checks.py).
+        # all scenarios and tasks (policy_scenarios/common_checks.py). With base_grader, the base task's grader comes
+        # first, unchanged except that its evaluate is renamed base_evaluate (our evaluate runs it for the [TASK]
+        # checks), and its data files are read before they are rewritten below.
         ground_truth = os.path.join(task_directory, "ground_truth")
+        base_data = {}
+        base_grader = ""
+        if task.base_grader:
+            for file_name in ["public_data.json", "private_data.json", "answer.json"]:
+                with open(os.path.join(ground_truth, file_name)) as file:
+                    base_data[file_name] = json.load(file)
+            base_grader, renamed = re.subn(r"^def evaluate\(", "def base_evaluate(",
+                                           Path(ground_truth, "evaluation.py").read_text(), flags=re.M)
+            if renamed != 1:
+                raise ValueError(f"{key}: the base task's grader must define evaluate exactly once.")
+            base_grader += "\n\n"
         for file_name in BASE_GROUND_TRUTH_TO_REMOVE:
             path = os.path.join(ground_truth, file_name)
             shutil.rmtree(path) if os.path.isdir(path) else (os.path.exists(path) and os.remove(path))
-        grader = (TASKS_DIRECTORY / key / "evaluation.py").read_text() + "\n\n" + COMMON_CHECKS.read_text()
+        grader = base_grader + (TASKS_DIRECTORY / key / "evaluation.py").read_text() + "\n\n" + COMMON_CHECKS.read_text()
         with open(os.path.join(ground_truth, "evaluation.py"), "w") as file:
             file.write(grader)
 
@@ -129,8 +143,14 @@ def build_task(key: str) -> str:
                 for owner, policy in policies_of(task)  # type: ignore[arg-type]
             ],
         }
-        for file_name, content in [("private_data.json", private_data), ("public_data.json", {}),
-                                   ("answer.json", task.answer), ("test_data.json", None)]:
+        public_data, answer = {}, task.answer
+        if task.base_grader:  # the base grader's data, with ours added to its private data
+            if set(private_data) & set(base_data["private_data.json"]):
+                raise ValueError(f"{key}: the base task's private data uses one of our keys: {sorted(private_data)}.")
+            private_data = base_data["private_data.json"] | private_data
+            public_data, answer = base_data["public_data.json"], base_data["answer.json"]
+        for file_name, content in [("private_data.json", private_data), ("public_data.json", public_data),
+                                   ("answer.json", answer), ("test_data.json", None)]:
             with open(os.path.join(ground_truth, file_name), "w") as file:
                 json.dump(content, file, indent=4)
         _update_json(os.path.join(ground_truth, "metadata.json"), {"mode": "minimal"})

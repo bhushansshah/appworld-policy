@@ -5,6 +5,23 @@
 # Note: test.case wraps numbers for tolerance, which breaks <, <=, >, >=; compare in Python and test the bool.
 from typing import Any
 
+class TaskChecks:
+    """The test tracker as a base task's own grader sees it (Task(base_grader=True)): each of its checks is labeled
+    [TASK], and everything else (test.case, test.answer, test.task_completed, ...) goes to the tracker as it is."""
+
+    def __init__(self, test: Any) -> None:
+        object.__setattr__(self, "_test", test)
+
+    def __call__(self, requirement: str) -> Any:
+        return self._test("[TASK] " + " ".join(requirement.split()))
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._test, name)
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        setattr(self._test, name, value)
+
+
 FAMILY_RELATIONSHIPS = {
     "parent", "mother", "father", "sibling", "brother", "sister", "partner", "wife", "husband", "child", "son",
     "daughter",

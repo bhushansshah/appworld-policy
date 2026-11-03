@@ -19,7 +19,7 @@ from policy_scenarios.scenario import INSTRUCTION, LEVELS, RELEVANCE, SETTING_NU
 
 @dataclass
 class Task:
-    base_task_id: str  # an AppWorld train or dev task whose world this task starts from
+    base_task_id: str  # an AppWorld task (any split) whose world this task starts from
     # The correct outcome, given to the grader as private data. Its "checks" are the [POLICY] checks, each with
     # "policy" (the key it tests) and "type" plus its fields (what to check in the data, see the grader).
     expected: dict[str, Any]
@@ -32,12 +32,19 @@ class Task:
     people_policies: dict[str, list[Policy]] = field(default_factory=dict)  # other people's, by email
     app_policies: dict[str, list[Policy]] = field(default_factory=dict)  # the app companies' (setting 1 only)
     conflicts: list[Conflict] = field(default_factory=list)
+    # True: the task is the base task unchanged plus policies. Task success is the base task's own grader, run as it
+    # is with each of its checks labeled [TASK], and its public data, private data and answer are kept; evaluation.py
+    # adds only the [POLICY] checks. No instruction, world setup or answer may be given.
+    base_grader: bool = False
 
 
 def check_task(task: Task, setting: int, task_id: str) -> None:
     """Raise a ValueError if the task does not fit its setting's rules."""
     if setting not in SETTING_NUMBERS:
         raise ValueError(f"{task_id}: setting must be one of {SETTING_NUMBERS}, got {setting!r}.")
+    if task.base_grader and (task.instruction or task.world_setup or task.answer is not None):
+        raise ValueError(f"{task_id}: with base_grader, the base task is kept as it is (no instruction, world setup "
+                         "or answer).")
     if task.answer is not None and not isinstance(task.answer, str | int | float):  # what complete_task takes
         raise ValueError(f"{task_id}: the answer must be None, a string or a number, got {task.answer!r}.")
     owned = policies_of(task)  # type: ignore[arg-type]  # a Task has the same policy fields as a Version
