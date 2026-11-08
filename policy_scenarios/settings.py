@@ -2,8 +2,7 @@
 
 A person, the user or someone else, can have general policies (not tied to any app) and policies for one app. Both
 are read through the supervisor app: without app_name for the general policies, with app_name for one app's. The
-apps' own show_policies APIs are hidden. The policies do not change what counts as task success; they only choose
-among the task's correct end states.
+policies do not change what counts as task success; they only choose among the task's correct end states.
 
 AppWorld lets each task change the API docs (data/tasks/<task_id>/dbs/api_docs.jsonl, on top of
 data/base_dbs/api_docs.db, which is generated from the code), so the builder writes these doc changes into every task.
@@ -11,12 +10,8 @@ data/base_dbs/api_docs.db, which is generated from the code), so the builder wri
 
 from typing import Any
 
-from appworld.apps import get_all_apps
-
 from policy_scenarios.task_db import record_task_changes
 
-APPS_WITH_SHOW_POLICIES = get_all_apps(skip_admin=True, skip_api_docs=True, skip_supervisor=True)
-HIDDEN_APIS = [(app, "show_policies") for app in APPS_WITH_SHOW_POLICIES]  # (app, API) docs the agent does not see
 EMAIL_PARAMETER = {
     "name": "email",
     "type": "string",
@@ -54,8 +49,6 @@ def write_api_docs(task_id: str) -> None:
 
     def change_docs(models: Any) -> None:
         api_doc = models.api_docs.ApiDoc
-        for app_name, api_name in HIDDEN_APIS:
-            api_doc.find_one(app_name_=app_name, api_name=api_name).delete()
         for api_name, fields in SUPERVISOR_DOCS.items():
             doc = api_doc.find_one(app_name_="supervisor", api_name=api_name)
             for key, value in fields.items():

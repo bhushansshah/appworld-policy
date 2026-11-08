@@ -13,13 +13,13 @@
 > uv pip install --python .venv/bin/python -e . -e "./experiments[simplified]" openapi-spec-validator -c constraints.txt
 > .venv/bin/appworld install --repo     # unpack the encrypted app code
 > .venv/bin/appworld download data
-> .venv/bin/python scripts/prepare_policy_data.py   # add the policy tables and API docs to the data
+> .venv/bin/python scripts/prepare_policy_data.py   # add the policy table and API docs to the data
 > .venv/bin/appworld verify tasks       # replays ground-truth solutions, no LLM needed
 > ```
 >
-> Policies: each task's policies (the user's, other people's, and each app's) are stored in its supervisor
-> data and read by agents through `apis.supervisor.show_my_policies()`,
-> `apis.supervisor.show_person_policies(email)` and `apis.<app>.show_policies()`. Our code lives in
+> Policies: each task's policies (the user's and other people's) are stored in its supervisor data and
+> read by agents through `apis.supervisor.show_my_policies()` and
+> `apis.supervisor.show_person_policies(email)`. Our code lives in
 > `policy_scenarios/`: `load_policies.py` loads a task's policies; check it with
 > `.venv/bin/python -m policy_scenarios.check_load_policies`.
 >

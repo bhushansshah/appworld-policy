@@ -2,8 +2,8 @@
 
 Run once after `appworld download data`, and again whenever an API changes. Safe to re-run.
 
-1. Add the (empty) policy tables to data/base_dbs/supervisor.db. Tasks load base DBs without creating
-   tables, so the tables must exist there; each task then inserts its own policies. A policy table made by
+1. Add the (empty) policy table to data/base_dbs/supervisor.db. Tasks load base DBs without creating
+   tables, so the table must exist there; each task then inserts its own policies. A policy table made by
    an older version of the code (missing a column) is recreated; it is empty in the base DB.
 2. Regenerate the API docs files (data/api_docs/<format>/<app>.json) from the code, with AppWorld's
    generate/code/api_docs.py. Existing APIs keep their order; new APIs are added at the end.
@@ -31,16 +31,14 @@ ROOT = Path(__file__).resolve().parents[1]
 BASE_DBS = ROOT / "data" / "base_dbs"
 
 
-def add_policy_tables() -> None:
+def add_policy_table() -> None:
     from appworld.apps.supervisor import models as supervisor_models
 
     engine = create_engine(f"sqlite:///{BASE_DBS / 'supervisor.db'}")
     existing_tables = inspect(engine).get_table_names()
     with engine.begin() as connection:
-        for model in (supervisor_models.PersonPolicy, supervisor_models.AppPolicy):
-            table = model.__table__
-            if table.name not in existing_tables:
-                continue
+        table = supervisor_models.PersonPolicy.__table__
+        if table.name in existing_tables:
             existing_columns = {column["name"] for column in inspect(connection).get_columns(table.name)}
             if existing_columns != set(table.columns.keys()):
                 count = connection.execute(text(f"SELECT COUNT(*) FROM {table.name}")).scalar()
@@ -50,7 +48,7 @@ def add_policy_tables() -> None:
     supervisor_models.SQLModel.metadata.create_all(engine)  # creates only the missing tables
     tables = inspect(engine).get_table_names()
     engine.dispose()
-    assert {"person_policies", "app_policies"} <= set(tables), tables
+    assert "person_policies" in tables, tables
     print(f"supervisor.db tables: {', '.join(sorted(tables))}")
 
 
@@ -92,7 +90,7 @@ def sync_api_docs_db() -> None:
 
 def main() -> None:
     os.chdir(ROOT)
-    add_policy_tables()
+    add_policy_table()
     regenerate_api_docs_files()
     sync_api_docs_db()
     print("Done.")

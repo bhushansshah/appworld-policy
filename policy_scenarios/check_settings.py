@@ -1,7 +1,7 @@
 """Check that tasks show the agent the right policy API docs.
 
 Makes a temporary copy of an AppWorld train task, writes the API doc changes into it (write_api_docs), and reads the
-docs the way an agent does (apis.api_docs). No LLM is used. Every show_policies must be hidden, also from search, and
+docs the way an agent does (apis.api_docs). No LLM is used. No app may have a show_policies API, also in search, and
 the supervisor docs must have an optional app_name (left out, the APIs return the general policies). The copy is
 deleted at the end.
 
@@ -15,9 +15,10 @@ import sys
 from typing import Any
 
 from appworld import AppWorld
+from appworld.apps import get_all_apps
 from appworld.common.path_store import path_store
 
-from policy_scenarios.settings import APPS_WITH_SHOW_POLICIES, SUPERVISOR_DOCS, write_api_docs
+from policy_scenarios.settings import SUPERVISOR_DOCS, write_api_docs
 
 BASE_TASK_ID = "22cc237_1"  # a train task
 CHECK_TASK_ID = "psettingcheck_1"
@@ -40,7 +41,7 @@ def visible_docs(world: AppWorld) -> dict[str, Any]:
     """What an agent can see about the policy APIs in this task."""
     listed = {
         app_name: [doc["name"] for doc in call(world, f"apis.api_docs.show_api_descriptions(app_name='{app_name}')")]
-        for app_name in APPS_WITH_SHOW_POLICIES
+        for app_name in get_all_apps(skip_admin=True, skip_api_docs=True, skip_supervisor=True)
     }
     found = []
     for page_index in range(30):
