@@ -1,17 +1,16 @@
 """Check a single task's grader against hand-written solutions (no LLM is used).
 
-A task folder (policy_scenarios/tasks/s<setting>/<name>/) has solution.py next to task.py, with:
+A task folder (policy_scenarios/tasks/s3/<name>/) has solution.py next to task.py, with:
 - PRELUDE: code run first in the task's world (e.g. log in and define helper functions);
 - SOLUTIONS: [Solution(name, code, verdict, violated)]: code that does the task in some way (good or with a
-  deliberate mistake) and the result the grader must give it: the verdict ("success", "policy violation" or "job
-  mistake"; in setting 3 "compliant", "not compliant" or "task failed") and the exact set of violated policies.
-The task is also run with a "do nothing" solution (just complete_task), which must be a job mistake (setting 3:
-task failed).
+  deliberate mistake) and the result the grader must give it: the verdict ("compliant", "not compliant" or "task
+  failed") and the exact set of violated policies.
+The task is also run with a "do nothing" solution (just complete_task), which must be "task failed".
 
 Each solution runs in a fresh world of the built task (build it first with build_task.py), is graded with the
 task's grader, and is reported as OK when the verdict and the violated policies are exactly the ones expected.
 
-Usage (from the repo root): .venv/bin/python -m policy_scenarios.validate_task [s<setting>/<name> ...]  (default: all)
+Usage (from the repo root): .venv/bin/python -m policy_scenarios.validate_task [s3/<name> ...]  (default: all)
 e.g. .venv/bin/python -m policy_scenarios.validate_task s3/giftbottlev1
 """
 
@@ -23,15 +22,14 @@ import sys
 
 from appworld.common.path_store import path_store
 
-from policy_scenarios.build_task import TASKS_DIRECTORY, split_key, task_id_of, task_keys
+from policy_scenarios.build_task import TASKS_DIRECTORY, task_id_of, task_keys
 from policy_scenarios.report import task_report
 from policy_scenarios.task_spec import Solution
 
 EXPERIMENT = "policy_scenarios_validate"
 
 
-def do_nothing(setting: int) -> Solution:
-    return Solution("do nothing", "apis.supervisor.complete_task()", "task failed" if setting == 3 else "job mistake")
+DO_NOTHING = Solution("do nothing", "apis.supervisor.complete_task()", "task failed")
 
 
 def run_solution(task_id: str, prelude: str, solution: Solution) -> dict:
@@ -57,11 +55,10 @@ def load_solutions(key: str) -> tuple[str, list[Solution]]:
 
 
 def validate_task(key: str) -> bool:
-    setting, _ = split_key(key)
     task_id = task_id_of(key)
     prelude, solutions = load_solutions(key)
     all_ok = True
-    for solution in [do_nothing(setting), *solutions]:
+    for solution in [DO_NOTHING, *solutions]:
         # Run the solution in a fresh world of the task, then grade it (see policy_scenarios/report.py).
         report = run_solution(task_id, prelude, solution)
         ok = report["verdict"] == solution.verdict and set(report["violated_policies"]) == set(solution.violated)
@@ -81,7 +78,7 @@ def validate_task(key: str) -> bool:
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("tasks", nargs="*", help="tasks as s<setting>/<name>, e.g. s3/giftbottlev1 (default: all)")
+    parser.add_argument("tasks", nargs="*", help="tasks as s3/<name>, e.g. s3/giftbottlev1 (default: all)")
     args = parser.parse_args()
     try:
         results = [validate_task(key) for key in args.tasks or task_keys()]

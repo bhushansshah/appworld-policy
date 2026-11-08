@@ -4,7 +4,6 @@ Policies are given as:
     {
         "supervisor": [policy, ...],                   # the task's supervisor (the user)
         "people": {"email": [policy, ...], ...},       # other people, by email
-        "apps": {"app_name": ["policy", ...], ...},    # apps, e.g. "venmo" (the app company's own rules)
     }
 A supervisor's or person's policy is either a string (a general policy) or {"app": "venmo", "policy": "..."}
 (their policy for one app). Every key is optional; {} removes all policies from the task.
@@ -27,7 +26,6 @@ from appworld.task import load_task_ids
 
 from policy_scenarios.task_db import record_task_changes
 
-POLICY_TABLES = ("person_policies", "app_policies")
 APPWORLD_DATASETS = ("train", "dev", "test_normal", "test_challenge")
 
 
@@ -37,7 +35,7 @@ def load_policies(task_id: str, policies: dict[str, Any]) -> None:
         raise ValueError(f"{task_id} is an original AppWorld task. Load policies into a copy of it instead.")
     with open(os.path.join(task_directory, "specs.json")) as file:
         supervisor_email = json.load(file)["supervisor"]["email"]
-    supervisor_policies, people_policies, app_policies = _validate(policies, supervisor_email)
+    supervisor_policies, people_policies = _validate(policies, supervisor_email)
 
     changes_path = os.path.join(task_directory, "dbs", "supervisor.jsonl")
     with open(changes_path) as file:
@@ -49,9 +47,6 @@ def load_policies(task_id: str, policies: dict[str, Any]) -> None:
         for email, entries in [(supervisor_email, supervisor_policies), *people_policies.items()]:
             for app_name, text in entries:
                 models.supervisor.PersonPolicy.create_save(email=email, app_name_=app_name, policy=text)
-        for app_name, texts in app_policies.items():
-            for text in texts:
-                models.supervisor.AppPolicy.create_save(app_name_=app_name, policy=text)
 
     try:
         # Drop the task's previous policy lines, then add the new ones (on top of the remaining changes).
@@ -67,27 +62,22 @@ def load_policies(task_id: str, policies: dict[str, Any]) -> None:
 
 
 def _is_policy_change(line: str) -> bool:
-    statement = json.loads(line)[0]
-    return any(statement.startswith(f"INSERT INTO {table} ") for table in POLICY_TABLES)
+    return json.loads(line)[0].startswith("INSERT INTO person_policies ")
 
 
 def _validate(
     policies: dict[str, Any], supervisor_email: str
-) -> tuple[list[tuple[str | None, str]], dict[str, list[tuple[str | None, str]]], dict[str, list[str]]]:
-    unknown_keys = set(policies) - {"supervisor", "people", "apps"}
+) -> tuple[list[tuple[str | None, str]], dict[str, list[tuple[str | None, str]]]]:
+    unknown_keys = set(policies) - {"supervisor", "people"}
     if unknown_keys:
-        raise ValueError(f"Unknown policy groups: {sorted(unknown_keys)}. Use supervisor, people and apps.")
+        raise ValueError(f"Unknown policy groups: {sorted(unknown_keys)}. Use supervisor and people.")
     supervisor_policies = _person_entries(policies.get("supervisor", []), "supervisor")
     people_policies = {
         email: _person_entries(entries, email) for email, entries in policies.get("people", {}).items()
     }
     if supervisor_email in people_policies:
         raise ValueError("Give the supervisor's own policies under 'supervisor', not 'people'.")
-    app_policies = {}
-    for app_name, texts in policies.get("apps", {}).items():
-        _check_app_name(app_name)
-        app_policies[app_name] = _texts(texts, app_name)
-    return supervisor_policies, people_policies, app_policies
+    return supervisor_policies, people_policies
 
 
 def _person_entries(entries: Any, owner: str) -> list[tuple[str | None, str]]:

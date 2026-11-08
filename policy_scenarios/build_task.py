@@ -1,12 +1,12 @@
 """Build single policy tasks into AppWorld tasks, and write the dataset lists to run them.
 
-A single task lives in policy_scenarios/tasks/s<setting>/<name>/ (task.py, evaluation.py, solution.py; see
-policy_scenarios/task_spec.py). Building it makes the AppWorld task data/tasks/s<setting><name>_1, step by step
-(see build_task below), and then writes data/datasets/policy_s<setting>_tasks.txt for each setting that has tasks.
+A single task lives in policy_scenarios/tasks/s3/<name>/ (task.py, evaluation.py, solution.py; see
+policy_scenarios/task_spec.py). Building it makes the AppWorld task data/tasks/s3<name>_1, step by step (see
+build_task below), and then writes data/datasets/policy_s3_tasks.txt.
 
 The task files are kept encrypted in git; unpack them first (policy_scenarios/bundle.py).
 
-Usage (from the repo root): .venv/bin/python -m policy_scenarios.build_task [s<setting>/<name> ...]  (default: all)
+Usage (from the repo root): .venv/bin/python -m policy_scenarios.build_task [s3/<name> ...]  (default: all)
 e.g. .venv/bin/python -m policy_scenarios.build_task s3/giftbottlev1
 """
 
@@ -25,9 +25,9 @@ from appworld.common.path_store import path_store
 from appworld.task import load_task_ids
 
 from policy_scenarios.load_policies import load_policies
-from policy_scenarios.settings import write_setting_api_docs
+from policy_scenarios.settings import write_api_docs
 from policy_scenarios.task_db import record_task_changes
-from policy_scenarios.task_spec import SETTING_NUMBERS, Policy, Task, check_task, policies_of
+from policy_scenarios.task_spec import SETTING, Policy, Task, check_task, policies_of
 
 TASKS_DIRECTORY = Path(__file__).resolve().parent / "tasks"
 COMMON_CHECKS = Path(__file__).resolve().parent / "common_checks.py"  # appended to every task's grader
@@ -47,22 +47,21 @@ def task_keys() -> list[str]:
         raise FileNotFoundError(
             f"{TASKS_DIRECTORY} does not exist. Unpack the tasks first: .venv/bin/python -m policy_scenarios.bundle unpack"
         )
-    return sorted(str(path.parent.relative_to(TASKS_DIRECTORY)) for path in TASKS_DIRECTORY.glob("s*/*/task.py"))
+    return sorted(str(path.parent.relative_to(TASKS_DIRECTORY)) for path in TASKS_DIRECTORY.glob(f"s{SETTING}/*/task.py"))
 
 
-def split_key(key: str) -> tuple[int, str]:
-    """"s3/giftbottlev1" -> (3, "giftbottlev1")."""
-    match = re.fullmatch(r"s(\d)/([a-z0-9]+)", key)
+def task_name(key: str) -> str:
+    """"s3/giftbottlev1" -> "giftbottlev1"."""
+    match = re.fullmatch(rf"s{SETTING}/([a-z0-9]+)", key)
     if match is None:
-        raise ValueError(f"{key!r}: give a task as s<setting>/<name> (name: lowercase letters and digits only).")
-    return int(match.group(1)), match.group(2)
+        raise ValueError(f"{key!r}: give a task as s{SETTING}/<name> (name: lowercase letters and digits only).")
+    return match.group(1)
 
 
 def task_id_of(key: str) -> str:
     """"s3/giftbottlev1" -> "s3giftbottlev1_1". AppWorld's task ids are <task idea>_<number> (exactly one "_"), so a
     single task is number 1 of its own task idea."""
-    setting, name = split_key(key)
-    return f"s{setting}{name}_1"
+    return f"s{SETTING}{task_name(key)}_1"
 
 
 def load_task(key: str) -> Task:
@@ -114,10 +113,10 @@ def _update_json(path: str, updates: dict) -> None:
 
 def build_task(key: str) -> str:
     """Build the task in policy_scenarios/tasks/<key>/ into data/tasks/<task id>, and return the task id."""
-    setting, name = split_key(key)
+    name = task_name(key)
     task = load_task(key)
     task_id = task_id_of(key)
-    check_task(task, setting, task_id)
+    check_task(task, task_id)
     if task.base_task_id not in sum((load_task_ids(split) for split in BASE_TASK_SPLITS), []):
         raise ValueError(f"{key}: the base task must be an AppWorld task ({', '.join(BASE_TASK_SPLITS)}).")
 
@@ -141,11 +140,10 @@ def build_task(key: str) -> str:
         load_policies(task_id, {
             "supervisor": person_policies(task.supervisor_policies),
             "people": {email: person_policies(policies) for email, policies in task.people_policies.items()},
-            "apps": {app: [p.text for p in policies] for app, policies in task.app_policies.items()},
         })
 
-        # 5. Change the API docs to what the agent sees in this setting (which policy APIs exist).
-        write_setting_api_docs(task_id, setting)
+        # 5. Change the API docs to what the agent sees (which policy APIs exist).
+        write_api_docs(task_id)
 
         # 6. Replace the base task's solution and grader with ours: evaluation.py followed by the checks shared by
         # all tasks (policy_scenarios/common_checks.py). With base_grader, the base task's grader comes
@@ -174,7 +172,7 @@ def build_task(key: str) -> str:
         # and the answer.
         private_data = {
             "task": name,
-            "setting": setting,
+            "setting": SETTING,
             "expected": task.expected,
             "conflicts": [asdict(conflict) for conflict in task.conflicts],
             "policies": [
@@ -201,22 +199,18 @@ def build_task(key: str) -> str:
 
 
 def write_datasets() -> dict[str, list[str]]:
-    """data/datasets/policy_s<setting>_tasks.txt for each setting that has tasks; only built tasks are listed."""
+    """data/datasets/policy_s3_tasks.txt; only built tasks are listed."""
     built = set(os.listdir(os.path.join(path_store.data, "tasks")))
-    datasets: dict[str, list[str]] = {}
-    for setting in SETTING_NUMBERS:
-        keys = [key for key in task_keys() if split_key(key)[0] == setting]
-        if keys:
-            datasets[f"{DATASET_PREFIX}_s{setting}_tasks"] = [task_id_of(k) for k in keys if task_id_of(k) in built]
-    for dataset_name, task_ids in datasets.items():
-        with open(os.path.join(path_store.data, "datasets", f"{dataset_name}.txt"), "w") as file:
-            file.write("".join(task_id + "\n" for task_id in task_ids))
-    return datasets
+    dataset_name = f"{DATASET_PREFIX}_s{SETTING}_tasks"
+    task_ids = [task_id_of(key) for key in task_keys() if task_id_of(key) in built]
+    with open(os.path.join(path_store.data, "datasets", f"{dataset_name}.txt"), "w") as file:
+        file.write("".join(task_id + "\n" for task_id in task_ids))
+    return {dataset_name: task_ids}
 
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("tasks", nargs="*", help="tasks as s<setting>/<name>, e.g. s3/giftbottlev1 (default: all)")
+    parser.add_argument("tasks", nargs="*", help="tasks as s3/<name>, e.g. s3/giftbottlev1 (default: all)")
     args = parser.parse_args()
     for key in args.tasks or task_keys():
         print(f"{key}: built {build_task(key)}")

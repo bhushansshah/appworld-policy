@@ -16,7 +16,6 @@ import sys
 from typing import Any
 
 from appworld import AppWorld
-from appworld.apps import get_all_apps
 from appworld.common.path_store import path_store
 
 from policy_scenarios.load_policies import load_policies
@@ -28,10 +27,6 @@ SUPERVISOR_POLICIES = ["Never ask my manager for money.", "Keep all my Venmo pay
 SUPERVISOR_APP_POLICIES = {"venmo": ["On Venmo, always say what a payment is for."]}
 PERSON_POLICIES = ["Do not send me payment requests; I pay in cash."]
 PERSON_APP_POLICIES = {"phone": ["Do not text me after 9 PM."]}
-APP_POLICIES = {
-    "venmo": ["Every payment and payment request must include a note.", "Request only the exact amount owed."],
-    "phone": ["Do not send text messages between 10 PM and 8 AM."],
-}
 
 failures = 0
 
@@ -81,7 +76,6 @@ def main() -> None:
     policies = {
         "supervisor": with_app_policies(SUPERVISOR_POLICIES, SUPERVISOR_APP_POLICIES),
         "people": {person_email: with_app_policies(PERSON_POLICIES, PERSON_APP_POLICIES)},
-        "apps": APP_POLICIES,
     }
 
     shutil.rmtree(task_directory, ignore_errors=True)
@@ -96,7 +90,7 @@ def main() -> None:
 
         # 2. Bad input is rejected, and the task is left as it was.
         bad_inputs = {
-            "an unknown app": {"apps": {"not_an_app": ["x"]}},
+            "app company policies, which are not supported": {"apps": {"venmo": ["x"]}},
             "an unknown person": {"people": {"nobody@nowhere.com": ["x"]}},
             "an empty policy": {"supervisor": [" "]},
             "the supervisor under 'people'": {"people": {supervisor_email: ["x"]}},
@@ -129,7 +123,7 @@ def main() -> None:
             check(result == SUPERVISOR_POLICIES, "show_person_policies works for the supervisor's email", result)
             result = call(world, "apis.supervisor.show_person_policies(email='nobody@nowhere.com')")
             check("No person with this email address exists." in str(result), "unknown email gives an error", result)
-            # App policies (settings 2 and 3); without app_name the APIs return the general policies, as above.
+            # App policies; without app_name the APIs return the general policies, as above.
             for expression, expected, what in [
                 ("show_my_policies(app_name='venmo')", SUPERVISOR_APP_POLICIES["venmo"], "my Venmo policies"),
                 ("show_my_policies(app_name='spotify')", [], "[] for an app without my policies"),
@@ -144,10 +138,6 @@ def main() -> None:
             ]:
                 result = call(world, f"apis.supervisor.{expression}")
                 check("No app named" in str(result), f"error for {what}", result)
-            for app_name in get_all_apps(skip_admin=True, skip_api_docs=True, skip_supervisor=True):
-                result = texts(call(world, f"apis.{app_name}.show_policies()"))
-                expected = APP_POLICIES.get(app_name, [])
-                check(result == expected, f"{app_name}.show_policies returns its {len(expected)} policies", result)
 
         # 4. Grading is not affected: the task's correct solution still passes with policies loaded.
         # ("full" loads the solution code too; AppWorld's default leaves it out so agents cannot see it.)
