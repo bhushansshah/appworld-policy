@@ -3,7 +3,8 @@
 A task folder (policy_scenarios/tasks/s<setting>/<name>/) has solution.py next to task.py, with:
 - PRELUDE: code run first in the task's world (e.g. log in and define helper functions);
 - SOLUTIONS: [Solution(name, code, verdict, violated)]: code that does the task in some way (good or with a
-  deliberate mistake) and the result the grader must give it, as in scenarios (see policy_scenarios/validate.py).
+  deliberate mistake) and the result the grader must give it: the verdict ("success", "policy violation" or "job
+  mistake"; in setting 3 "compliant", "not compliant" or "task failed") and the exact set of violated policies.
 The task is also run with a "do nothing" solution (just complete_task), which must be a job mistake (setting 3:
 task failed).
 
@@ -23,7 +24,26 @@ import sys
 from appworld.common.path_store import path_store
 
 from policy_scenarios.build_task import TASKS_DIRECTORY, split_key, task_id_of, task_keys
-from policy_scenarios.validate import EXPERIMENT, Solution, do_nothing, run_solution
+from policy_scenarios.report import task_report
+from policy_scenarios.task_spec import Solution
+
+EXPERIMENT = "policy_scenarios_validate"
+
+
+def do_nothing(setting: int) -> Solution:
+    return Solution("do nothing", "apis.supervisor.complete_task()", "task failed" if setting == 3 else "job mistake")
+
+
+def run_solution(task_id: str, prelude: str, solution: Solution) -> dict:
+    from appworld import AppWorld
+
+    shutil.rmtree(os.path.join(path_store.experiment_outputs, EXPERIMENT, "tasks", task_id), ignore_errors=True)
+    with AppWorld(task_id=task_id, experiment_name=EXPERIMENT) as world:
+        for code in (prelude, solution.code):
+            output = world.execute(code) if code else ""
+            if "Execution failed" in output:
+                raise RuntimeError(f"{task_id} / {solution.name}: the solution's code failed:\n{output}")
+    return task_report(task_id, EXPERIMENT)
 
 
 def load_solutions(key: str) -> tuple[str, list[Solution]]:

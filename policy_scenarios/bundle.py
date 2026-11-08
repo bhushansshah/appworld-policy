@@ -1,12 +1,12 @@
-"""Keep the scenario and single task files encrypted in git.
+"""Keep the task files encrypted in git.
 
-Scenario and task files contain AppWorld data (names, emails, amounts), which may only be shared publicly in
-encrypted form. So policy_scenarios/scenarios/ and policy_scenarios/tasks/ are git-ignored and committed as the
-encrypted bundle policy_scenarios/.source/scenarios.bundle, the same way AppWorld ships its own task generators.
+Task files contain AppWorld data (names, emails, amounts), which may only be shared publicly in encrypted form. So
+policy_scenarios/tasks/ is git-ignored and committed as the encrypted bundle policy_scenarios/.source/tasks.bundle,
+the same way AppWorld ships its own task generators.
 
 Usage (from the repo root):
-    .venv/bin/python -m policy_scenarios.bundle unpack   # bundle -> the two folders (after cloning)
-    .venv/bin/python -m policy_scenarios.bundle pack     # the two folders -> bundle (before committing)
+    .venv/bin/python -m policy_scenarios.bundle unpack   # bundle -> the folder (after cloning)
+    .venv/bin/python -m policy_scenarios.bundle pack     # the folder -> bundle (before committing)
     .venv/bin/python -m policy_scenarios.bundle check    # fails if the bundle and the folder differ
 """
 
@@ -18,8 +18,8 @@ from appworld.common.constants import PASSWORD, SALT
 from appworld.common.crypto import bundle_file_path_to_content, pack_bundle, unpack_bundle
 
 BASE_DIRECTORY = Path(__file__).resolve().parent
-FOLDERS = ["scenarios", "tasks"]  # under policy_scenarios/
-BUNDLE_PATH = BASE_DIRECTORY / ".source" / "scenarios.bundle"
+FOLDERS = ["tasks"]  # under policy_scenarios/
+BUNDLE_PATH = BASE_DIRECTORY / ".source" / "tasks.bundle"
 
 
 def folder_content() -> dict[str, str]:
@@ -57,13 +57,13 @@ def unpack() -> None:
 def check() -> bool:
     in_bundle, in_folder = bundle_content(), folder_content()
     if in_bundle == in_folder:
-        print("The bundle and the scenario and task files match.")
+        print("The bundle and the task files match.")
         return True
     for path in sorted(set(in_bundle) | set(in_folder)):
         if in_bundle.get(path) != in_folder.get(path):
             where = "only in the folder" if path not in in_bundle else "only in the bundle" if path not in in_folder else "differs"
             print(f"  {path}: {where}")
-    print("The bundle and the scenario and task files differ. Run pack (to save the folder) or unpack (to restore it).")
+    print("The bundle and the task files differ. Run pack (to save the folder) or unpack (to restore it).")
     return False
 
 

@@ -4,7 +4,7 @@ A single task lives in policy_scenarios/tasks/s<setting>/<name>/ (task.py, evalu
 policy_scenarios/task_spec.py). Building it makes the AppWorld task data/tasks/s<setting><name>_1, step by step
 (see build_task below), and then writes data/datasets/policy_s<setting>_tasks.txt for each setting that has tasks.
 
-The task files are kept encrypted in git, like the scenarios; unpack them first (policy_scenarios/bundle.py).
+The task files are kept encrypted in git; unpack them first (policy_scenarios/bundle.py).
 
 Usage (from the repo root): .venv/bin/python -m policy_scenarios.build_task [s<setting>/<name> ...]  (default: all)
 e.g. .venv/bin/python -m policy_scenarios.build_task s3/giftbottlev1
@@ -16,23 +16,29 @@ import json
 import os
 import re
 import shutil
+from collections.abc import Callable
 from dataclasses import asdict
 from pathlib import Path
+from typing import Any
 
 from appworld.common.path_store import path_store
 from appworld.task import load_task_ids
 
-from policy_scenarios.build import (
-    BASE_GROUND_TRUTH_TO_REMOVE, COMMON_CHECKS, DATASET_PREFIX, SCENARIOS_DIRECTORY, _update_json, apply_world_setup,
-    set_instruction,
-)
 from policy_scenarios.load_policies import load_policies
-from policy_scenarios.scenario import SETTING_NUMBERS, Policy, policies_of
 from policy_scenarios.settings import write_setting_api_docs
-from policy_scenarios.task_spec import Task, check_task
+from policy_scenarios.task_db import record_task_changes
+from policy_scenarios.task_spec import SETTING_NUMBERS, Policy, Task, check_task, policies_of
 
 TASKS_DIRECTORY = Path(__file__).resolve().parent / "tasks"
+COMMON_CHECKS = Path(__file__).resolve().parent / "common_checks.py"  # appended to every task's grader
 BASE_TASK_SPLITS = ["train", "dev", "test_normal", "test_challenge"]
+DATASET_PREFIX = "policy"
+WORLD_EXPERIMENT = "policy_scenarios_world_setup"  # temporary run outputs while applying world changes
+# The base task's solution and its generator do not apply to the new task.
+BASE_GROUND_TRUTH_TO_REMOVE = [
+    "solution.py", "compiled_solution.py", "generator.py", "api_calls.json", "required_apps.json",
+    "required_apis.json", "__pycache__",
+]
 
 
 def task_keys() -> list[str]:
@@ -67,14 +73,51 @@ def load_task(key: str) -> Task:
     return module.TASK
 
 
+def apply_world_setup(task_id: str, world_setup: Callable[[Any], None]) -> None:
+    """Run world_setup in the task's world and save the changes, as recorded by AppWorld, into the task's dbs."""
+    from appworld import AppWorld
+
+    try:
+        with AppWorld(task_id=task_id, experiment_name=WORLD_EXPERIMENT, allow_datetime_change=True) as world:
+            world_setup(world)
+            world.save()
+        saved_directory = os.path.join(path_store.experiment_outputs, WORLD_EXPERIMENT, "tasks", task_id, "dbs")
+        task_dbs = os.path.join(path_store.data, "tasks", task_id, "dbs")
+        for name in os.listdir(saved_directory):
+            if name.endswith(".jsonl"):
+                shutil.copy(os.path.join(saved_directory, name), os.path.join(task_dbs, name))
+    finally:
+        shutil.rmtree(os.path.join(path_store.experiment_outputs, WORLD_EXPERIMENT), ignore_errors=True)
+
+
+def set_instruction(task_id: str, instruction: str) -> None:
+    """Set the task's instruction in specs.json (what agents are given) and in its supervisor DB task row (what
+    supervisor.show_active_task returns). As in load_policies, the row is changed through AppWorld's models and
+    the SQL it runs is recorded into the task's supervisor DB changes."""
+    task_directory = os.path.join(path_store.data, "tasks", task_id)
+    _update_json(os.path.join(task_directory, "specs.json"), {"instruction": instruction})
+
+    def change_instruction(models: Any) -> None:
+        (task,) = models.supervisor.Task.all()
+        task.instruction = instruction
+        task.save()
+
+    record_task_changes(task_id, "supervisor", change_instruction)
+
+
+def _update_json(path: str, updates: dict) -> None:
+    with open(path) as file:
+        content = json.load(file)
+    with open(path, "w") as file:
+        json.dump(content | updates, file, indent=4)
+
+
 def build_task(key: str) -> str:
     """Build the task in policy_scenarios/tasks/<key>/ into data/tasks/<task id>, and return the task id."""
     setting, name = split_key(key)
     task = load_task(key)
     task_id = task_id_of(key)
     check_task(task, setting, task_id)
-    if (SCENARIOS_DIRECTORY / f"s{setting}" / name).exists():
-        raise ValueError(f"{key}: a scenario has the same name, so their task ids would clash; rename the task.")
     if task.base_task_id not in sum((load_task_ids(split) for split in BASE_TASK_SPLITS), []):
         raise ValueError(f"{key}: the base task must be an AppWorld task ({', '.join(BASE_TASK_SPLITS)}).")
 
@@ -105,7 +148,7 @@ def build_task(key: str) -> str:
         write_setting_api_docs(task_id, setting)
 
         # 6. Replace the base task's solution and grader with ours: evaluation.py followed by the checks shared by
-        # all scenarios and tasks (policy_scenarios/common_checks.py). With base_grader, the base task's grader comes
+        # all tasks (policy_scenarios/common_checks.py). With base_grader, the base task's grader comes
         # first, unchanged except that its evaluate is renamed base_evaluate (our evaluate runs it for the [TASK]
         # checks), and its data files are read before they are rewritten below.
         ground_truth = os.path.join(task_directory, "ground_truth")
@@ -128,19 +171,16 @@ def build_task(key: str) -> str:
             file.write(grader)
 
         # 7. Write what the grader and the report read: the correct outcome and the policy labels (private data),
-        # and the answer. The report (policy_scenarios/report.py) reads "scenario" and "version"; a single task has
-        # neither.
+        # and the answer.
         private_data = {
-            "scenario": None,
             "task": name,
             "setting": setting,
-            "version": None,
             "expected": task.expected,
             "conflicts": [asdict(conflict) for conflict in task.conflicts],
             "policies": [
                 {"key": policy.key, "owner": owner, "app": policy.app, "relevance": policy.relevance,
                  "level": policy.level, "text": policy.text}
-                for owner, policy in policies_of(task)  # type: ignore[arg-type]
+                for owner, policy in policies_of(task)
             ],
         }
         public_data, answer = {}, task.answer
