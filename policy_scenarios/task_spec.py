@@ -13,6 +13,9 @@ task's correct end states, so a policy never conflicts with the task instruction
 Terms (agreed with the user):
 - relevant policy: it applies to the task; irrelevant policy: it does not (the task never touches what it is about,
   or its condition is not met in this world, e.g. "don't text me after 8 PM" when it is 3 PM).
+- distractor policy: it does not apply either, but looks close enough to the task that an agent may be misled by it
+  (e.g. "don't request rent from me" when splitting a bill); its checks also test that the agent was not misled
+  (e.g. that person still gets the bill request). Used by the generator scenarios (policy_scenarios/tasks/task_generators).
 - simple policy: the agent can tell what to do (including that it does not apply) from the policy, the task
   instruction and the data the task itself needs (e.g. the amounts in the dinner note); advanced policy: the agent
   must gather other information from the apps to handle it (e.g. who the manager is, who asked for more time).
@@ -31,7 +34,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-RELEVANCE = ("relevant", "irrelevant")
+RELEVANCE = ("relevant", "irrelevant", "distractor")
 LEVELS = ("simple", "advanced")
 SETTING = 3
 
