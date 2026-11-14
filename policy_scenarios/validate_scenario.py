@@ -1,8 +1,9 @@
 """Check a scenario's graders by running solutions in its built tasks (no LLM is used).
 
-For each task: the correct solution must be "compliant", and each of the scenario's mistakes (the correct solution
-with a few lines changed, see Mistake in scenario_generator.py) must get exactly its expected verdict and violated
-policies. Build the scenario first (scenario_generator.py).
+For each task: the correct solution must succeed and violate no policy, and each of the scenario's mistakes (the
+correct solution with a few lines changed, see Mistake in scenario_generator.py) must get exactly its expected task
+success and, separately, its expected violated policies (none = policy compliant). Build the scenario first
+(scenario_generator.py).
 
 Usage (from the repo root): .venv/bin/python -m policy_scenarios.validate_scenario [<id> ...]  (default: all)
 """
@@ -28,23 +29,32 @@ def solution_code(correct_code: str, mistake: Mistake) -> str:
     return correct_code
 
 
+def outcome(task_success: bool, violated: list[str]) -> str:
+    """E.g. "task success: yes, policy compliance: no (violated: expense_log)"."""
+    compliance = f"no (violated: {', '.join(violated)})" if violated else "yes"
+    return f"task success: {'yes' if task_success else 'no'}, policy compliance: {compliance}"
+
+
 def validate_scenario(scenario_id: str) -> bool:
     generator = load_scenario(scenario_id)
     all_ok = True
     for task in generator.tasks:
         task_id = f"{scenario_id}_{task.number}"
         correct_code = function_body(task.solution)
-        cases = [Mistake(task.number, "correct solution", [], "compliant")]
+        cases = [Mistake(task.number, "correct solution", [])]
         cases += [mistake for mistake in generator.mistakes if mistake.task_number == task.number]
         for case in cases:
-            solution = Solution(case.name, solution_code(correct_code, case), case.verdict, case.violated)
-            report = run_solution(task_id, "", solution)
-            ok = report["verdict"] == case.verdict and set(report["violated_policies"]) == set(case.violated)
+            report = run_solution(task_id, "", Solution(case.name, solution_code(correct_code, case), ""))
+            # task success and policy compliance are checked separately: compliance must find exactly the expected
+            # violated policies (none = compliant), whatever happened to the task.
+            task_ok = report["task_success"] == case.task_success
+            policies_ok = set(report["violated_policies"]) == set(case.violated)
+            ok = task_ok and policies_ok
             all_ok &= ok
-            violated = f" (violated: {', '.join(report['violated_policies'])})" if report["violated_policies"] else ""
-            print(f"{'OK  ' if ok else 'FAIL'} {task_id} {case.name}: {report['verdict']}{violated}")
+            print(f"{'OK  ' if ok else 'FAIL'} {task_id} {case.name}: "
+                  f"{outcome(report['task_success'], report['violated_policies'])}")
             if not ok:
-                print(f"     expected: {case.verdict}" + (f" (violated: {', '.join(case.violated)})" if case.violated else ""))
+                print(f"     expected: {outcome(case.task_success, case.violated)}")
                 for failure in report["task_failures"]:
                     print(f"     failed [TASK]: {failure}")
                 for policy in report["policies"]:

@@ -117,8 +117,8 @@ class Mistake:
     task_number: int
     name: str
     replacements: list[tuple[str, str]]  # (text in the correct solution, what to put instead); each must occur once
-    verdict: str  # "compliant", "not compliant" or "task failed"
-    violated: list[str] = field(default_factory=list)  # the policy keys the grader must find violated
+    task_success: bool = True  # whether the grader must find the task done
+    violated: list[str] = field(default_factory=list)  # the policy keys it must find violated (none = compliant)
     code: str | None = None  # run this instead of the changed correct solution (e.g. one that does nothing)
 
 
