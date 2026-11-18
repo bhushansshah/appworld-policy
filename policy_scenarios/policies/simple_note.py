@@ -22,16 +22,19 @@ def note_facts(models, main_user, titles=()):
     return facts
 
 
-def check_note_lines_marked(test, key, state, title, line_starts, suffix):
-    """Policy: mark these lines of my note (e.g. what I paid back) by adding this suffix at their end.
-    Checks: in the note titled title, the lines starting with any of line_starts end with suffix, and every other
-    line (a header too) is unchanged, with no line added or removed (normalize_text=True); nothing to check when no
-    line is to be marked. (note_facts must be given the title.)"""
+def check_note_lines_marked(test, key, state, title, suffix_by_line_start):
+    """Policy: mark lines of my note (e.g. what was paid) by adding a suffix at their end.
+    Checks: in the note titled title, each line starting with a key of suffix_by_line_start ends with that key's
+    suffix, and every other line (a header too) is unchanged, with no line added or removed (normalize_text=True);
+    nothing to check when no line is to be marked. (note_facts must be given the title.)"""
     require(state, "notes")
-    if not line_starts:
+    if not suffix_by_line_start:
         return
     start_lines = [line.strip() for line in state.notes[title].start.strip().splitlines()]
     end_lines = [line.strip() for line in state.notes[title].end.strip().splitlines()]
-    with test(f"[POLICY:{key}] mark these lines of the note \"{title}\" with \"{suffix}\""):
-        expected = [normalize(line + suffix if line.startswith(tuple(line_starts)) else line) for line in start_lines]
+    expected = []
+    for line in start_lines:
+        suffixes = [suffix for line_start, suffix in suffix_by_line_start.items() if line.startswith(line_start)]
+        expected.append(normalize(line + suffixes[0] if suffixes else line))
+    with test(f"[POLICY:{key}] mark lines of the note \"{title}\""):
         test.case([normalize(line) for line in end_lines], "==", expected)
