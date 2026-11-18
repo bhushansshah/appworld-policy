@@ -4,7 +4,8 @@ from policy_scenarios.policies.helpers import require
 
 
 def check_payment_receipts_saved(test, key, state, folder):
-    """Policy: when you pay someone on Venmo for me, download the receipt to this folder.
+    """Policy: When you pay someone on Venmo for me, including paying a request, download the receipt to my "receipts"
+        folder. I keep them for taxes.
     Checks: each new Venmo payment of mine has its receipt (a file with "Transaction ID: #<id>") in the folder, e.g.
     "~/receipts/"."""
     require(state, "payments", "files")

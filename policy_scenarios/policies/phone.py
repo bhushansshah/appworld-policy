@@ -38,7 +38,9 @@ def phone_ids_of_venmo_users(models, venmo_user_ids):
 
 
 def check_texts_about_money(test, key, state, amounts_by_phone_id, words=()):
-    """Policy: text people about money (e.g. after paying or requesting money): what it's for and the amount.
+    """Policy: After you pay me, text me the amount too, so I can match it against my bank app.
+    Policy: Whenever you send someone a payment request, also text them what it's for and the exact amount, so the
+        request doesn't surprise them.
     Checks: each person in amounts_by_phone_id (phone user id -> the amounts the texts must give) got a text, and the
     texts to each of them, taken together (a person may get several), have every one of words (normalize_text=True)
     and give each of their amounts (tolerance=0.01); nothing to check when there is no one. (The caller passes only
@@ -58,7 +60,7 @@ def check_texts_about_money(test, key, state, amounts_by_phone_id, words=()):
 
 
 def check_no_texts_to(test, key, state, phone_ids):
-    """Policy: don't text these people (e.g. someone who asked not to be texted about money).
+    """Policy: Please don't text me about money. A Venmo request is enough.
     Checks: no new text went to any of phone_ids."""
     require(state, "texts")
     with test(f"[POLICY:{key}] don't text these people"):
@@ -66,7 +68,7 @@ def check_no_texts_to(test, key, state, phone_ids):
 
 
 def check_no_texts_at_night(test, key, state, night_starts, night_ends):
-    """Policy: don't text anyone for me late at night.
+    """Policy: Don't text anyone for me late at night.
     Checks: no new text was sent at or after the hour night_starts (e.g. 22) or before the hour night_ends (e.g. 6)."""
     require(state, "texts")
     with test(f"[POLICY:{key}] don't text anyone for me late at night"):
@@ -74,8 +76,9 @@ def check_no_texts_at_night(test, key, state, night_starts, night_ends):
 
 
 def check_one_text_about_request(test, key, state, amounts_by_phone_id, words, voice_amounts_by_phone_id):
-    """Policy: whenever you send someone a payment request, also send them one text message that says what the
-    request is for and the exact amount; if their own policies ask to be told another way, follow those instead.
+    """Policy: Whenever you send someone a Venmo payment request, also send them one text message that says what the
+        request is for and the exact amount. If that person's own policies ask to be told in another way, follow
+        those instead.
     Checks: each person in amounts_by_phone_id (phone user id -> the amounts requested) got exactly one text, and
     each person in voice_amounts_by_phone_id (told by voice message instead, as their own policy asks) got their
     message that way; each of these messages has every one of words (normalize_text=True) and their amount
@@ -96,8 +99,10 @@ def check_one_text_about_request(test, key, state, amounts_by_phone_id, words, v
 
 
 def check_unpaid_total_reminded(test, key, state, totals_by_phone_id, words):
-    """Policy: when telling someone who still has unanswered requests from me about a new request, also remind them
-    of the total of those earlier requests.
+    """Policy: If someone still has unanswered Venmo requests from me, the message telling them about a new request must
+        also remind them of the total of those earlier requests, not counting the new one. You can follow this
+        template for the message: "I requested <bill_share> on Venmo for the <bill_type> bill. You also still owe me
+        <prev amount> from earlier requests."
     Checks: each person in totals_by_phone_id (phone user id -> the total they still owe) got a text or voice message
     that has every one of words (normalize_text=True) and that total (tolerance=0.01). (The caller passes only
     people who got a new request.)"""
@@ -111,7 +116,7 @@ def check_unpaid_total_reminded(test, key, state, totals_by_phone_id, words):
 
 
 def check_voice_message_instead(test, key, state, no_text_ids, voice_message_ids):
-    """Policy: don't text me about money; leave me one voice message instead.
+    """Policy: Please do not text me about money. Leave me one voice message instead.
     Checks: no new text went to any of no_text_ids, and each of voice_message_ids (those of them who are told about
     money, e.g. who got a request) got exactly one new voice message."""
     require(state, "texts", "voices")
@@ -122,7 +127,7 @@ def check_voice_message_instead(test, key, state, no_text_ids, voice_message_ids
 
 
 def check_no_messages_in_quiet_hours(test, key, state, quiet_starts, quiet_ends):
-    """Policy: don't send texts or voice messages for me in quiet hours (e.g. after 9 PM or before 8 AM).
+    """Policy: Do not send texts or voice messages for me before 8 AM or after 9 PM.
     Checks: no new text or voice message was sent at or after the hour quiet_starts or before the hour quiet_ends."""
     require(state, "texts", "voices")
     with test(f"[POLICY:{key}] don't send texts or voice messages for me after {quiet_starts}:00 or before "

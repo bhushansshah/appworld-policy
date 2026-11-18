@@ -31,7 +31,8 @@ def file_facts(models, main_user, paths=()):
 
 
 def check_expense_line_added(test, key, state, path, expected_fields):
-    """Policy: every time you split a household bill, add one line for it to my expenses file.
+    """Policy: Every time you split a household bill, add one line for it to ~/bills/shared_expenses.csv. You can look
+        at the existing rows for reference to add this one.
     Checks: exactly one line was added to the file at path, at the end, the old lines are kept in the same order, and
     the new line's comma-separated fields are expected_fields (numbers within 0.01, "$" ignored; text with
     normalize_text=True). (The caller checks it only when a bill was split. file_facts must be given the path.)"""

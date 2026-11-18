@@ -27,7 +27,7 @@ def email_facts(models):
 
 
 def check_receipt_emailed(test, key, state, gmail_user_ids, receipt):
-    """Policy: when you ask me to pay for a bill, email me the receipt as well.
+    """Policy: When you ask me to pay for a bill, email me the receipt as well.
     Checks: each of gmail_user_ids got exactly one new email, with exactly one attachment, the receipt (its content);
     nothing to check when there is no one. (The caller passes only the people asked to pay.)"""
     require(state, "emails", "attachments")

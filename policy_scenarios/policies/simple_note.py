@@ -23,7 +23,9 @@ def note_facts(models, main_user, titles=()):
 
 
 def check_note_lines_marked(test, key, state, title, suffix_by_line_start):
-    """Policy: mark lines of my note (e.g. what was paid) by adding a suffix at their end.
+    """Policy: I keep an "IOUs" note of money I owe people. When you pay one back, add " - paid" to the end of its line.
+    Policy: When you collect money for a bill I wrote down in a note, update that note: at the end of each person's
+        line, add '- payment received' if they have already paid me, or '- payment not received yet' if they haven't.
     Checks: in the note titled title, each line starting with a key of suffix_by_line_start ends with that key's
     suffix, and every other line (a header too) is unchanged, with no line added or removed (normalize_text=True);
     nothing to check when no line is to be marked. (note_facts must be given the title.)"""
