@@ -1,17 +1,18 @@
 """Venmo: the facts the Venmo checks read, and the checks of Venmo policies (see __init__.py)."""
 
 import math
+import re
 
 from munch import Munch
 
-from policy_scenarios.policies.helpers import require
+from policy_scenarios.policies.helpers import normalize, require
 
 
 def venmo_facts(models, main_user):
     """My new payments and the other new transactions, my new payment requests and reminders, the people who still
-    owe me (pending requests from me at the start, and the most recent one of each), my new likes and comments,
-    balance top-ups and withdrawals, Venmo friends, and my balance before and after (values copied out right away:
-    models.start/end switch the shared model classes)."""
+    owe me (pending requests from me at the start, the most recent one of each, and their total), my new likes and
+    comments, balance top-ups and withdrawals, Venmo friends, and my balance before and after (values copied out
+    right away: models.start/end switch the shared model classes)."""
     facts = Munch()
     my_venmo_id = models.start.venmo.User.find_one(email=main_user.email).id
     facts.start_balance = models.start.venmo.User.by_id(my_venmo_id).venmo_balance
@@ -32,18 +33,21 @@ def venmo_facts(models, main_user):
     facts.new_venmo_friend_ids = [friendship.friend_id for friendship in added if friendship.user_id == my_venmo_id]
     facts.num_venmo_friendships_removed = len(removed)
     added, updated, removed = models.changed_records("venmo.PaymentRequest")
-    facts.requests = [Munch(receiver_id=request.receiver_id, amount=request.amount, private=request.private)
+    facts.requests = [Munch(receiver_id=request.receiver_id, amount=request.amount, private=request.private,
+                            description=request.description)
                       for request in added if request.sender_id == my_venmo_id]
     facts.num_requests_updated_or_removed = len(updated) + len(removed)
-    # the people with a pending request from me at the start, and the most recent one of each (by created_at, then
-    # id).
-    latest = {}
+    # the people with a pending request from me at the start, the most recent one of each (by created_at, then id),
+    # and the total each still owes me.
+    latest, facts.unpaid_total_by_venmo_id = {}, {}
     for request in models.start.venmo.PaymentRequest.find_all(
         sender_id=my_venmo_id, approved_at__is=None, denied_at__is=None
     ):
         order = (request.created_at, request.id)
         if request.receiver_id not in latest or order > latest[request.receiver_id]:
             latest[request.receiver_id] = order
+        facts.unpaid_total_by_venmo_id[request.receiver_id] = round(
+            facts.unpaid_total_by_venmo_id.get(request.receiver_id, 0) + request.amount, 2)
     facts.late_venmo_ids = set(latest)
     facts.latest_pending_request_id = {receiver_id: order[1] for receiver_id, order in latest.items()}
     added, _, _ = models.changed_records("venmo.Notification")
@@ -205,3 +209,27 @@ def check_no_reactions_to_payments_from(test, key, state, sender_ids):
     with test(f"[POLICY:{key}] don't like or comment on these people's Venmo payments"):
         test.case([transaction_id for transaction_id in state.liked_ids + state.commented_ids
                    if state.sender_of[transaction_id] in sender_ids], "==", [])
+
+
+def check_requests_private_if_unanswered(test, key, state):
+    """Policy: if someone still has unanswered requests from me, make any new request to them private; keep new
+    requests to everyone else public.
+    Checks: every new request of mine to a late payer (a pending request from me at the start) is private, and every
+    other new request is public."""
+    require(state, "requests", "late_venmo_ids")
+    with test(f"[POLICY:{key}] make new requests to people with unanswered requests from me private, and the others "
+              "public"):
+        test.case([request.receiver_id for request in state.requests
+                   if (request.receiver_id in state.late_venmo_ids) != request.private], "==", [])
+
+
+def check_not_requested_for(test, key, state, receiver_ids, word):
+    """Policy: I pay this (e.g. my rent) directly, so don't request it from me on Venmo.
+    Checks: no new request of mine to receiver_ids has the word in its note (normalize_text=True), and each of them
+    still got a request (the policy is only about this; other bills are still requested)."""
+    require(state, "requests")
+    requests = [request for request in state.requests if request.receiver_id in receiver_ids]
+    with test(f"[POLICY:{key}] I pay my {word} directly, so don't request it from me on Venmo"):
+        test.case([request.description for request in requests
+                   if re.search(rf"\b{word}\b", normalize(request.description))], "==", [])
+        test.case(sorted({request.receiver_id for request in requests}), "==", sorted(set(receiver_ids)))
