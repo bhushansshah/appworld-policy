@@ -67,6 +67,23 @@ def check_no_texts_to(test, key, state, phone_ids):
         test.case([text.message for text in state.texts if text.receiver_id in phone_ids], "==", [])
 
 
+def check_decline_texted(test, key, state, phone_id_of, reason):
+    """Policy: When you decline someone's Venmo request for me, text them to let them know why.
+    Checks: each person whose request I declined (phone_id_of: venmo user id -> phone user id) got a text, and their
+    texts, taken together, contain the whole reason (normalize_text=True); the reason is the one the task instruction
+    gives; nothing to check when I declined none. (The caller passes only the people the policy covers.)"""
+    require(state, "declined", "texts")
+    sender_ids = {request.sender_id for request in state.declined if request.sender_id in phone_id_of}
+    if not sender_ids:
+        return
+    texts_to = {sender_id: " ".join(text.message for text in state.texts if text.receiver_id == phone_id_of[sender_id])
+                for sender_id in sender_ids}
+    with test(f"[POLICY:{key}] when you decline someone's Venmo request, text them to let them know why"):
+        test.case(sorted(sender_id for sender_id, messages in texts_to.items() if not messages), "==", [])
+        test.case(sorted(sender_id for sender_id, messages in texts_to.items()
+                         if messages and normalize(reason) not in normalize(messages)), "==", [])
+
+
 def check_no_texts_at_night(test, key, state, night_starts, night_ends):
     """Policy: Don't text anyone for me late at night.
     Checks: no new text was sent at or after the hour night_starts (e.g. 22) or before the hour night_ends (e.g. 6)."""
