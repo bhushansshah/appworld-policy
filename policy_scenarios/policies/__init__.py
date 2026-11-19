@@ -1,10 +1,10 @@
 """Policy checks shared by the policy scenarios.
 
-- venmo.py, phone.py, simple_note.py, file_system.py, gmail.py, splitwise.py: per app, a facts function (e.g.
-  venmo_facts) that copies out of the start and end states what checks read about that app.
+- venmo.py, phone.py, simple_note.py, spotify.py, file_system.py, gmail.py, splitwise.py: per app, a facts function
+  (e.g. venmo_facts) that copies out of the start and end states what checks read about that app.
 - A check is filed under the app whose action triggers its policy, even when the policy acts in another app: "When
-  you pay someone on Venmo, save the receipt" and "After you pay me, text me the amount" are in venmo.py; "Don't
-  text anyone late at night" is in phone.py. (So far only venmo.py and phone.py have checks.)
+  you pay someone on Venmo, save the receipt" and "After you pay me, text me the amount" are in venmo.py; "Do not
+  send texts or voice messages for me before 8 AM or after 9 PM" is in phone.py.
 - damage.py: the [POLICY:general] checks that the policies' extra work damaged nothing; helpers.py: small helpers
   (normalize, includes_number, require, ...).
 
