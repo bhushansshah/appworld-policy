@@ -6,7 +6,7 @@ import re
 
 from munch import Munch
 
-from policy_scenarios.policies.helpers import includes_number, normalize, require
+from policy_scenarios.policies.helpers import date_texts, includes_number, normalize, require
 
 
 def venmo_facts(models, main_user):
@@ -420,10 +420,7 @@ def check_spending_logged(test, key, state, title, name_of, what_for_of, date):
     start_lines = [normalize(line) for line in state.notes[title].start.splitlines() if line.strip()]
     end_lines = [normalize(line) for line in state.notes[title].end.splitlines() if line.strip()]
     new_lines = [line for line in end_lines if line not in start_lines]
-    month, month_short = normalize(date.strftime("%B")), normalize(date.strftime("%b"))
-    dates = [f"{date.year}-{date.month:02d}-{date.day:02d}", f"{date.month}/{date.day}",
-             f"{date.month:02d}/{date.day:02d}", f"{month} {date.day}", f"{month_short} {date.day}",
-             f"{date.day} {month}", f"{date.day} {month_short}"]
+    dates = date_texts(date)
     with test(f"[POLICY:{key}] add every Venmo payment I make to my \"{title}\" note: the date, who I paid, the "
               "amount and what it was for"):
         test.case([line for line in start_lines if line not in end_lines], "==", [])

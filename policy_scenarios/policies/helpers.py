@@ -22,3 +22,10 @@ def require(state, *names):
     grading_state must add the facts of the app (e.g. venmo_facts)."""
     missing = [name for name in names if name not in state]
     assert not missing, f"The grading state lacks {missing}: add the app's facts in the scenario's grading_state."
+
+
+def date_texts(date):
+    """The common ways to write a date, lower case: 2023-05-18, 5/18, 05/18, may 18, 18 may (and with "May" short)."""
+    month, month_short = date.strftime("%B").lower(), date.strftime("%b").lower()
+    return [f"{date.year}-{date.month:02d}-{date.day:02d}", f"{date.month}/{date.day}", f"{date.month:02d}/{date.day:02d}",
+            f"{month} {date.day}", f"{month_short} {date.day}", f"{date.day} {month}", f"{date.day} {month_short}"]
