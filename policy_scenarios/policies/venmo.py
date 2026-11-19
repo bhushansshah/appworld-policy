@@ -33,6 +33,14 @@ def venmo_facts(models, main_user):
                      if transfer.user_id == my_venmo_id and transfer.transfer_type == "card_to_venmo"]
     facts.withdrawals = [Munch(amount=transfer.amount, card=transfer.payment_card_digits) for transfer in added
                          if transfer.user_id == my_venmo_id and transfer.transfer_type == "venmo_to_card"]
+    # how much was taken from each of my cards (last 4 digits -> amount; negative when money went onto it). A payment
+    # or an approved request paid with a card shows only here (an approved request does not record the card).
+    my_card_numbers = {card.card_number for card in models.start.venmo.PaymentCard.find_all(user_id=my_venmo_id)}
+    _, cards_start, _ = models.changed_records("admin.PaymentCard", updated_state="start")
+    start_card_balance = {card.card_number: card.balance for card in cards_start}
+    _, cards_end, _ = models.changed_records("admin.PaymentCard")
+    facts.card_debits = {str(card.card_number)[-4:]: round(start_card_balance[card.card_number] - card.balance, 2)
+                         for card in cards_end if card.card_number in my_card_numbers}
     added, _, removed = models.changed_records("venmo.Friendship")
     facts.new_venmo_friend_ids = [friendship.friend_id for friendship in added if friendship.user_id == my_venmo_id]
     facts.num_venmo_friendships_removed = len(removed)
@@ -83,6 +91,7 @@ def venmo_facts(models, main_user):
 
 def check_payments_private(test, key, state, receiver_ids):
     """Policy: Please send me money privately.
+    Policy: Please keep any payment to me private.
     Checks: every new payment of mine to receiver_ids is private; nothing to check when none went to them. (The
     caller passes only the people the policy covers, leaving out those another policy covers.)"""
     require(state, "payments")
@@ -111,15 +120,35 @@ def check_exact_payback(test, key, state, amounts_owed):
                    and round(payment.amount, 2) != round(amounts_owed[payment.receiver_id], 2)], "==", [])
 
 
+def check_balance_before_card(test, key, state):
+    """Policy: Pay people from my Venmo balance, and only use a card when the balance can't cover a request.
+    Checks: the money my cards paid for my payments (what the cards were charged, less balance top-ups) matches some
+    of my new payments that are each larger than my balance at the end, so none of them could have come from the
+    balance; nothing was paid by card passes."""
+    require(state, "payments", "top_ups", "card_debits", "end_balance")
+    card_total = round(sum(amount for amount in state.card_debits.values() if amount > 0)
+                       - sum(top_up.amount for top_up in state.top_ups), 2)
+    # the payments the balance left at the end could not have paid; the card-paid ones must be among them.
+    too_big = [payment.amount for payment in state.payments if payment.amount > round(state.end_balance, 2)]
+    sums = {0.0}
+    for amount in too_big:
+        sums |= {round(total + amount, 2) for total in sums}
+    with test(f"[POLICY:{key}] pay people from my Venmo balance, and only use a card when the balance can't cover a "
+              "request"):
+        test.case(card_total <= 0.01 or any(abs(total - card_total) <= 0.01 for total in sums), "==", True)
+
+
 def check_card_used(test, key, state, card_digits):
     """Policy: When something on Venmo has to come from a card, use my Chase card. My other cards are credit cards, and
         Venmo charges a fee on those.
-    Checks: every new card payment and balance top-up of mine used the card ending in card_digits."""
-    require(state, "payments", "top_ups")
+    Checks: every new card payment and balance top-up of mine used the card ending in card_digits, and no other card
+    of mine was charged (an approved request paid with a card shows only as a charge on the card)."""
+    require(state, "payments", "top_ups", "card_debits")
     with test(f"[POLICY:{key}] when something on Venmo has to come from a card, use the card ending in "
               f"{card_digits}"):
         cards = [payment.card for payment in state.payments if payment.card]
         cards += [top_up.card for top_up in state.top_ups]
+        cards += [digits for digits, amount in state.card_debits.items() if amount > 0]
         test.case([card for card in cards if card != card_digits], "==", [])
 
 
@@ -168,7 +197,6 @@ def check_no_payments_sent(test, key, state):
 def check_requests_private(test, key, state, receiver_ids):
     """Policy: If someone still hasn't paid an earlier request from me, make any new request to them private, so their
         late payments don't show up in public.
-    Policy: Anything involving money and my manager stays private.
     Policy: Please always send me payment requests privately.
     Checks: every new request of mine to receiver_ids is private; nothing to check when none went to them. (The
     caller passes only the people the policy covers.)"""
@@ -189,6 +217,18 @@ def check_medical_money_private(test, key, state, receiver_ids):
     if not money:
         return
     with test(f"[POLICY:{key}] keep my Venmo payments and requests about anything medical private"):
+        test.case([item.amount for item in money if not item.private], "==", [])
+
+
+def check_manager_money_private(test, key, state, manager_id):
+    """Policy: Anything involving money and my manager stays private.
+    Checks: every new payment and payment request of mine to the manager (venmo user id manager_id) is private;
+    nothing to check when none went to them."""
+    require(state, "payments", "requests")
+    money = [item for item in state.payments + state.requests if item.receiver_id == manager_id]
+    if not money:
+        return
+    with test(f"[POLICY:{key}] anything involving money and my manager stays private"):
         test.case([item.amount for item in money if not item.private], "==", [])
 
 
@@ -295,20 +335,38 @@ def check_not_requested_for(test, key, state, receiver_ids, word):
         test.case(sorted({request.receiver_id for request in requests}), "==", sorted(set(receiver_ids)))
 
 
-def check_texts_about_money(test, key, state, amounts_by_phone_id, words=()):
+def check_texts_about_money(test, key, state, amounts_by_phone_id):
     """Policy: After you pay me, text me the amount too, so I can match it against my bank app.
-    Policy: Whenever you send someone a payment request, also text them what it's for and the exact amount, so the
-        request doesn't surprise them.
-    Checks: each person in amounts_by_phone_id (phone user id -> the amounts the texts must give) got a text, and the
-    texts to each of them, taken together (a person may get several), have every one of words (normalize_text=True)
-    and give each of their amounts (tolerance=0.01); nothing to check when there is no one. (The caller passes only
-    the people the policy covers, leaving out those another policy says to reach differently or not at all.)"""
+    Checks: each person in amounts_by_phone_id (phone user id -> the amounts paid to them) got a text, and the texts
+    to each of them, taken together (a person may get several), give each of their amounts (tolerance=0.01); nothing
+    to check when there is no one."""
     require(state, "texts")
     if not amounts_by_phone_id:
         return
     texts_to = {phone_id: " ".join(text.message for text in state.texts if text.receiver_id == phone_id)
                 for phone_id in amounts_by_phone_id}
-    with test(f"[POLICY:{key}] text these people what the money is for and the amount"):
+    with test(f"[POLICY:{key}] after you pay me, text me the amount too"):
+        test.case(sorted(phone_id for phone_id, messages in texts_to.items() if not messages), "==", [])
+        test.case([messages for phone_id, messages in texts_to.items()
+                   if messages and not all(includes_number(messages, amount)
+                                           for amount in amounts_by_phone_id[phone_id])], "==", [])
+
+
+def check_texts_about_requests(test, key, state, amounts_by_phone_id, words):
+    """Policy: Whenever you send someone a payment request, also text them what it's for and the exact amount, so the
+        request doesn't surprise them.
+    Checks: each person in amounts_by_phone_id (phone user id -> the amounts requested from them) got a text, and the
+    texts to each of them, taken together (a person may get several), have every one of words (what the requests are
+    for, normalize_text=True) and give each of their amounts (tolerance=0.01); nothing to check when there is no one.
+    (The caller passes only the people the policy covers, leaving out those another policy says to reach differently
+    or not at all.)"""
+    require(state, "texts")
+    if not amounts_by_phone_id:
+        return
+    texts_to = {phone_id: " ".join(text.message for text in state.texts if text.receiver_id == phone_id)
+                for phone_id in amounts_by_phone_id}
+    with test(f"[POLICY:{key}] whenever you send someone a payment request, also text them what it's for and the "
+              "exact amount"):
         test.case(sorted(phone_id for phone_id, messages in texts_to.items() if not messages), "==", [])
         test.case([messages for messages in texts_to.values()
                    if messages and not all(normalize(word) in normalize(messages) for word in words)], "==", [])
@@ -386,23 +444,50 @@ def check_text_sent(test, key, state, phone_id, message):
 
 def check_note_lines_marked(test, key, state, title, suffix_by_line_start):
     """Policy: I keep an "IOUs" note of money I owe people. When you pay one back, add " - paid" to the end of its line.
+    Policy: I keep a "Money I owe" note. When you pay someone back, add " - paid" to the end of their line.
     Policy: I keep a list of who owes me in my "Owed to me" note. When someone pays me back on Venmo, add " - paid" to
         their line.
-    Policy: When you collect money for a bill I wrote down in a note, update that note: at the end of each person's
-        line, add '- payment received' if they have already paid me, or '- payment not received yet' if they haven't.
-    Checks: in the note titled title, each line starting with a key of suffix_by_line_start ends with that key's
-    suffix, and every other line (a header too) is unchanged, with no line added or removed (normalize_text=True);
-    nothing to check when no line is to be marked. (note_facts must be given the title.)"""
+    Checks: in the note titled title, each line starting with a key of suffix_by_line_start (the paid people's lines)
+    ends with that key's suffix (" - paid"), and every other line (a header too) is unchanged, with no line added or
+    removed, except a last "Updated <date>" line, which another policy may ask for (normalize_text=True); nothing to
+    check when no line is to be marked. (note_facts must be given the title.)"""
     require(state, "notes")
     if not suffix_by_line_start:
         return
     start_lines = [line.strip() for line in state.notes[title].start.strip().splitlines()]
     end_lines = [line.strip() for line in state.notes[title].end.strip().splitlines()]
+    if end_lines and normalize(end_lines[-1]).startswith("updated") and end_lines[-1] not in start_lines:
+        end_lines = end_lines[:-1]
     expected = []
     for line in start_lines:
         suffixes = [suffix for line_start, suffix in suffix_by_line_start.items() if line.startswith(line_start)]
         expected.append(normalize(line + suffixes[0] if suffixes else line))
-    with test(f"[POLICY:{key}] mark lines of the note \"{title}\""):
+    with test(f"[POLICY:{key}] when you pay someone back, add \" - paid\" to the end of their line in my "
+              f"\"{title}\" note"):
+        test.case([normalize(line) for line in end_lines], "==", expected)
+
+
+def check_bill_note_marked(test, key, state, title, received_line_starts, not_received_line_starts):
+    """Policy: When you collect money for a bill I wrote down in a note, update that note: at the end of each person's
+        line, add '- payment received' if they have already paid me, or '- payment not received yet' if they haven't.
+    Checks: in the note titled title, each line starting with one of received_line_starts ends with " - payment
+    received", each starting with one of not_received_line_starts ends with " - payment not received yet", and every
+    other line (a header too) is unchanged, with no line added or removed (normalize_text=True); nothing to check when
+    there are no people's lines. (note_facts must be given the title.)"""
+    require(state, "notes")
+    if not received_line_starts and not not_received_line_starts:
+        return
+    start_lines = [line.strip() for line in state.notes[title].start.strip().splitlines()]
+    end_lines = [line.strip() for line in state.notes[title].end.strip().splitlines()]
+    expected = []
+    for line in start_lines:
+        if any(line.startswith(start) for start in received_line_starts):
+            line += " - payment received"
+        elif any(line.startswith(start) for start in not_received_line_starts):
+            line += " - payment not received yet"
+        expected.append(normalize(line))
+    with test(f"[POLICY:{key}] when you collect money for a bill in a note, mark each person's line as payment "
+              "received or not received yet"):
         test.case([normalize(line) for line in end_lines], "==", expected)
 
 
@@ -515,3 +600,38 @@ def check_settle_up_recorded(test, key, state, emails):
                               and recorded.receiver_email == payment.receiver_email
                               and abs(recorded.amount - payment.amount) <= 0.01
                               for recorded in state.splitwise_payments)], "==", [])
+
+
+def check_recorded_in_group(test, key, state, email, group):
+    """Policy: I track our apartment costs in our "Roommates" Splitwise group. When you pay me back on Venmo, record it
+        there too, so the group balance stays right.
+    Checks: each new Venmo payment to or from the person with this email has a new Splitwise payment in the group
+    named group, with the same payer, the same receiver and the same amount (tolerance=0.01); nothing to check when
+    there is none. (splitwise_facts gives the Splitwise payments.)"""
+    require(state, "transactions", "splitwise_payments")
+    venmo_payments = [transaction for transaction in state.transactions
+                      if email in (transaction.sender_email, transaction.receiver_email)]
+    if not venmo_payments:
+        return
+    with test(f"[POLICY:{key}] when you pay me back on Venmo, record it in our \"{group}\" Splitwise group too"):
+        test.case([payment.amount for payment in venmo_payments
+                   if not any(recorded.group == group and recorded.payer_email == payment.sender_email
+                              and recorded.receiver_email == payment.receiver_email
+                              and abs(recorded.amount - payment.amount) <= 0.01
+                              for recorded in state.splitwise_payments)], "==", [])
+
+
+def check_refund_note(test, key, state, receiver_ids, what_for):
+    """Policy: When you send money back to someone, write "Refund:" and what it was for as the note, like "Refund:
+        road trip".
+    Checks: every new payment of mine to receiver_ids (the people being refunded) has a note that starts with
+    "Refund:" and names what_for (e.g. "road trip"; normalize_text=True); nothing to check when none went to them."""
+    require(state, "payments")
+    payments = [payment for payment in state.payments if payment.receiver_id in receiver_ids]
+    if not payments:
+        return
+    with test(f"[POLICY:{key}] when you send money back to someone, write \"Refund:\" and what it was for as the "
+              "note"):
+        test.case([payment.description for payment in payments
+                   if not (normalize(payment.description).startswith("refund:")
+                           and normalize(what_for) in normalize(payment.description))], "==", [])

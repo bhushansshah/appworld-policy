@@ -79,6 +79,6 @@ def check_receipts_named_date_first(test, key, state, folder, date):
     names = [file.tilde_path.split("/")[-1] for file in state.files if file.tilde_path.startswith(folder)]
     if not names:
         return
-    day = f"{date.year}-{date.month:02d}-{date.day:02d}"
+    day = str(date)[:10]  # a date, or its text "YYYY-MM-DD"
     with test(f"[POLICY:{key}] when you save a receipt for me, name it with the date first, like \"{day}_...\""):
         test.case([name for name in names if not name.startswith(day)], "==", [])

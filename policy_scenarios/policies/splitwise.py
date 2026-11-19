@@ -8,7 +8,7 @@ from policy_scenarios.policies.helpers import date_texts, includes_number, norma
 
 def splitwise_facts(models):
     """New Splitwise expenses (what for, amount, group name or None, who paid by email, the attached receipt's content
-    or None) and new Splitwise payments (who paid whom by email, amount, note)."""
+    or None) and new Splitwise payments (who paid whom by email, amount, note, group name or None)."""
     facts = Munch()
     splitwise = models.end.splitwise
     added, _, _ = models.changed_records("splitwise.Expense")
@@ -20,7 +20,8 @@ def splitwise_facts(models):
     added, _, _ = models.changed_records("splitwise.Payment")
     facts.splitwise_payments = [Munch(payer_email=splitwise.User.by_id(payment.payer_id).email,
                                       receiver_email=splitwise.User.by_id(payment.receiver_id).email,
-                                      amount=payment.amount, description=payment.description or "")
+                                      amount=payment.amount, description=payment.description or "",
+                                      group=splitwise.Group.by_id(payment.group_id).name if payment.group_id else None)
                                 for payment in added]
     return facts
 

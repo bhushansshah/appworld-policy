@@ -25,7 +25,10 @@ def require(state, *names):
 
 
 def date_texts(date):
-    """The common ways to write a date, lower case: 2023-05-18, 5/18, 05/18, may 18, 18 may (and with "May" short)."""
-    month, month_short = date.strftime("%B").lower(), date.strftime("%b").lower()
-    return [f"{date.year}-{date.month:02d}-{date.day:02d}", f"{date.month}/{date.day}", f"{date.month:02d}/{date.day:02d}",
-            f"{month} {date.day}", f"{month_short} {date.day}", f"{date.day} {month}", f"{date.day} {month_short}"]
+    """The common ways to write a date, lower case: 2023-05-18, 5/18, 05/18, may 18, 18 may (and with "May" short).
+    date: a date, or its text "YYYY-MM-DD" (the start of str(date))."""
+    year, month, day = (int(part) for part in str(date)[:10].split("-"))
+    month_name = ["january", "february", "march", "april", "may", "june", "july", "august", "september", "october",
+                  "november", "december"][month - 1]
+    return [f"{year}-{month:02d}-{day:02d}", f"{month}/{day}", f"{month:02d}/{day:02d}", f"{month_name} {day}",
+            f"{month_name[:3]} {day}", f"{day} {month_name}", f"{day} {month_name[:3]}"]
