@@ -1,8 +1,7 @@
-"""Gmail: the facts the email checks read, and the checks of email policies (see __init__.py)."""
+"""Gmail: the facts about emails that checks read (the checks are filed under the app whose action triggers their
+policy, e.g. venmo.py; see __init__.py)."""
 
 from munch import Munch
-
-from policy_scenarios.policies.helpers import require
 
 
 def email_facts(models):
@@ -24,20 +23,3 @@ def email_facts(models):
     facts.threads_with_deleted_emails = [thread.id for thread in threads_start
                                          if not set(thread.email_ids) <= end_ids[thread.id]]
     return facts
-
-
-def check_receipt_emailed(test, key, state, gmail_user_ids, receipt):
-    """Policy: When you ask me to pay for a bill, email me the receipt as well.
-    Checks: each of gmail_user_ids got exactly one new email, with exactly one attachment, the receipt (its content);
-    nothing to check when there is no one. (The caller passes only the people asked to pay.)"""
-    require(state, "emails", "attachments")
-    if not gmail_user_ids:
-        return
-    with test(f"[POLICY:{key}] when you ask me to pay for a bill, email me the receipt as well"):
-        for gmail_user_id in gmail_user_ids:
-            emails = [email for email in state.emails if gmail_user_id in email.recipient_ids]
-            test.case(len(emails), "==", 1)
-            attachments = [attachment for attachment in state.attachments
-                           if emails and attachment.email_id == emails[0].id]
-            test.case(len(attachments), "==", 1)
-            test.case(attachments[0].file_content.strip(), "==", (receipt or "").strip())

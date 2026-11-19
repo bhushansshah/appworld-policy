@@ -1,11 +1,12 @@
-"""Venmo: the facts the Venmo checks read, and the checks of Venmo policies (see __init__.py)."""
+"""Venmo: the facts the Venmo checks read, and the checks of every policy a Venmo action triggers, also when the
+policy acts in another app (a text after a payment, a note line, a receipt file, a Splitwise record; see __init__.py)."""
 
 import math
 import re
 
 from munch import Munch
 
-from policy_scenarios.policies.helpers import normalize, require
+from policy_scenarios.policies.helpers import includes_number, normalize, require
 
 
 def venmo_facts(models, main_user):
@@ -22,6 +23,9 @@ def venmo_facts(models, main_user):
                                 receiver_id=transaction.receiver_id, amount=transaction.amount,
                                 description=transaction.description, private=transaction.private,
                                 card=transaction.payment_card_digits) for transaction in added]
+    for transaction in facts.transactions:  # emails, to match a payment with the same one in another app
+        transaction.sender_email = models.end.venmo.User.by_id(transaction.sender_id).email
+        transaction.receiver_email = models.end.venmo.User.by_id(transaction.receiver_id).email
     facts.num_transactions_updated, facts.num_transactions_removed = len(updated), len(removed)
     facts.payments = [transaction for transaction in facts.transactions if transaction.sender_id == my_venmo_id]
     added, _, _ = models.changed_records("venmo.BankTransfer")
@@ -176,6 +180,18 @@ def check_requests_private(test, key, state, receiver_ids):
         test.case([request.receiver_id for request in requests if not request.private], "==", [])
 
 
+def check_medical_money_private(test, key, state, receiver_ids):
+    """Policy: Keep my Venmo payments and requests about anything medical private.
+    Checks: every new payment and request of mine to receiver_ids is private; nothing to check when none went to them.
+    (The caller passes the people the medical money is with.)"""
+    require(state, "payments", "requests")
+    money = [item for item in state.payments + state.requests if item.receiver_id in receiver_ids]
+    if not money:
+        return
+    with test(f"[POLICY:{key}] keep my Venmo payments and requests about anything medical private"):
+        test.case([item.amount for item in money if not item.private], "==", [])
+
+
 def check_requests_public(test, key, state, excluded=()):
     """Policy: Keep my Venmo payment requests public.
     Checks: every new request of mine is public, except those to the excluded (people another policy says to send
@@ -277,3 +293,228 @@ def check_not_requested_for(test, key, state, receiver_ids, word):
         test.case([request.description for request in requests
                    if re.search(rf"\b{word}\b", normalize(request.description))], "==", [])
         test.case(sorted({request.receiver_id for request in requests}), "==", sorted(set(receiver_ids)))
+
+
+def check_texts_about_money(test, key, state, amounts_by_phone_id, words=()):
+    """Policy: After you pay me, text me the amount too, so I can match it against my bank app.
+    Policy: Whenever you send someone a payment request, also text them what it's for and the exact amount, so the
+        request doesn't surprise them.
+    Checks: each person in amounts_by_phone_id (phone user id -> the amounts the texts must give) got a text, and the
+    texts to each of them, taken together (a person may get several), have every one of words (normalize_text=True)
+    and give each of their amounts (tolerance=0.01); nothing to check when there is no one. (The caller passes only
+    the people the policy covers, leaving out those another policy says to reach differently or not at all.)"""
+    require(state, "texts")
+    if not amounts_by_phone_id:
+        return
+    texts_to = {phone_id: " ".join(text.message for text in state.texts if text.receiver_id == phone_id)
+                for phone_id in amounts_by_phone_id}
+    with test(f"[POLICY:{key}] text these people what the money is for and the amount"):
+        test.case(sorted(phone_id for phone_id, messages in texts_to.items() if not messages), "==", [])
+        test.case([messages for messages in texts_to.values()
+                   if messages and not all(normalize(word) in normalize(messages) for word in words)], "==", [])
+        test.case([messages for phone_id, messages in texts_to.items()
+                   if messages and not all(includes_number(messages, amount)
+                                           for amount in amounts_by_phone_id[phone_id])], "==", [])
+
+
+def check_one_text_about_request(test, key, state, amounts_by_phone_id, words, voice_amounts_by_phone_id):
+    """Policy: Whenever you send someone a Venmo payment request, also send them one text message that says what the
+        request is for and the exact amount. If that person's own policies ask to be told in another way, follow
+        those instead.
+    Checks: each person in amounts_by_phone_id (phone user id -> the amounts requested) got exactly one text, and
+    each person in voice_amounts_by_phone_id (told by voice message instead, as their own policy asks) got their
+    message that way; each of these messages has every one of words (normalize_text=True) and their amount
+    (tolerance=0.01). (How many voice messages is the person's own policy's rule. The caller passes only people who
+    got a request.)"""
+    require(state, "texts", "voices")
+    texts = [text for text in state.texts if text.receiver_id in amounts_by_phone_id]
+    voices = [voice for voice in state.voices if voice.receiver_id in voice_amounts_by_phone_id]
+    amounts = {**amounts_by_phone_id, **voice_amounts_by_phone_id}
+    with test(f"[POLICY:{key}] whenever you send someone a payment request, also send them one text message that "
+              "says what it is for and the exact amount, or tell them the way they ask"):
+        test.case(sorted(text.receiver_id for text in texts), "==", sorted(amounts_by_phone_id))
+        test.case([message.message for message in texts + voices
+                   if not all(normalize(word) in normalize(message.message) for word in words)], "==", [])
+        test.case([message.message for message in texts + voices
+                   if not all(includes_number(message.message, amount) for amount in amounts[message.receiver_id])],
+                  "==", [])
+
+
+def check_unpaid_total_reminded(test, key, state, totals_by_phone_id, words):
+    """Policy: If someone still has unanswered Venmo requests from me, the message telling them about a new request must
+        also remind them of the total of those earlier requests, not counting the new one. You can follow this
+        template for the message: "I requested <bill_share> on Venmo for the <bill_type> bill. You also still owe me
+        <prev amount> from earlier requests."
+    Checks: each person in totals_by_phone_id (phone user id -> the total they still owe) got a text or voice message
+    that has every one of words (normalize_text=True) and that total (tolerance=0.01). (The caller passes only
+    people who got a new request.)"""
+    require(state, "texts", "voices")
+    with test(f"[POLICY:{key}] when telling someone with unanswered requests about a new one, remind them of the "
+              "total they still owe"):
+        test.case([phone_id for phone_id, total in totals_by_phone_id.items() if not any(
+            message.receiver_id == phone_id and includes_number(message.message, total)
+            and all(normalize(word) in normalize(message.message) for word in words)
+            for message in state.texts + state.voices)], "==", [])
+
+
+def check_decline_texted(test, key, state, phone_id_of, reason):
+    """Policy: When you decline someone's Venmo request for me, text them to let them know why.
+    Checks: each person whose request I declined (phone_id_of: venmo user id -> phone user id) got a text, and their
+    texts, taken together, contain the whole reason (normalize_text=True); the reason is the one the task instruction
+    gives; nothing to check when I declined none. (The caller passes only the people the policy covers.)"""
+    require(state, "declined", "texts")
+    sender_ids = {request.sender_id for request in state.declined if request.sender_id in phone_id_of}
+    if not sender_ids:
+        return
+    texts_to = {sender_id: " ".join(text.message for text in state.texts if text.receiver_id == phone_id_of[sender_id])
+                for sender_id in sender_ids}
+    with test(f"[POLICY:{key}] when you decline someone's Venmo request, text them to let them know why"):
+        test.case(sorted(sender_id for sender_id, messages in texts_to.items() if not messages), "==", [])
+        test.case(sorted(sender_id for sender_id, messages in texts_to.items()
+                         if messages and normalize(reason) not in normalize(messages)), "==", [])
+
+
+def check_text_sent(test, key, state, phone_id, message):
+    """Policy: When you send my rent to my landlord on Venmo, text them "Rent for <month> sent" so they know to check.
+    Checks: a new text to phone_id contains the message, e.g. "Rent for May sent" (normalize_text=True). (The caller
+    checks it only when the rent was sent.)"""
+    require(state, "texts")
+    with test(f"[POLICY:{key}] text \"{message}\""):
+        test.case([text.message for text in state.texts
+                   if text.receiver_id == phone_id and normalize(message) in normalize(text.message)], "!=", [])
+
+
+def check_note_lines_marked(test, key, state, title, suffix_by_line_start):
+    """Policy: I keep an "IOUs" note of money I owe people. When you pay one back, add " - paid" to the end of its line.
+    Policy: I keep a list of who owes me in my "Owed to me" note. When someone pays me back on Venmo, add " - paid" to
+        their line.
+    Policy: When you collect money for a bill I wrote down in a note, update that note: at the end of each person's
+        line, add '- payment received' if they have already paid me, or '- payment not received yet' if they haven't.
+    Checks: in the note titled title, each line starting with a key of suffix_by_line_start ends with that key's
+    suffix, and every other line (a header too) is unchanged, with no line added or removed (normalize_text=True);
+    nothing to check when no line is to be marked. (note_facts must be given the title.)"""
+    require(state, "notes")
+    if not suffix_by_line_start:
+        return
+    start_lines = [line.strip() for line in state.notes[title].start.strip().splitlines()]
+    end_lines = [line.strip() for line in state.notes[title].end.strip().splitlines()]
+    expected = []
+    for line in start_lines:
+        suffixes = [suffix for line_start, suffix in suffix_by_line_start.items() if line.startswith(line_start)]
+        expected.append(normalize(line + suffixes[0] if suffixes else line))
+    with test(f"[POLICY:{key}] mark lines of the note \"{title}\""):
+        test.case([normalize(line) for line in end_lines], "==", expected)
+
+
+def check_spending_logged(test, key, state, title, name_of, what_for_of, date):
+    """Policy: Add every Venmo payment I make to my "Spending" note: the date, who I paid, the amount and what it was
+        for.
+    Checks: in the note titled title, every old line is kept, and each new Venmo payment of mine has a new line with
+    the date (e.g. 2023-05-18, 5/18, 05/18, May 18 or 18 May), who I paid (name_of: venmo user id -> name), the
+    amount (tolerance=0.01) and what it was for (what_for_of: venmo user id -> e.g. "groceries"); text with
+    normalize_text=True; nothing to check when I paid no one. (note_facts must be given the title; venmo_facts gives
+    the payments.)"""
+    require(state, "notes", "payments")
+    if not state.payments:
+        return
+    start_lines = [normalize(line) for line in state.notes[title].start.splitlines() if line.strip()]
+    end_lines = [normalize(line) for line in state.notes[title].end.splitlines() if line.strip()]
+    new_lines = [line for line in end_lines if line not in start_lines]
+    month, month_short = normalize(date.strftime("%B")), normalize(date.strftime("%b"))
+    dates = [f"{date.year}-{date.month:02d}-{date.day:02d}", f"{date.month}/{date.day}",
+             f"{date.month:02d}/{date.day:02d}", f"{month} {date.day}", f"{month_short} {date.day}",
+             f"{date.day} {month}", f"{date.day} {month_short}"]
+    with test(f"[POLICY:{key}] add every Venmo payment I make to my \"{title}\" note: the date, who I paid, the "
+              "amount and what it was for"):
+        test.case([line for line in start_lines if line not in end_lines], "==", [])
+        test.case([payment.amount for payment in state.payments
+                   if not any(any(day in line for day in dates)
+                              and normalize(name_of[payment.receiver_id]) in line
+                              and includes_number(line, payment.amount)
+                              and normalize(what_for_of[payment.receiver_id]) in line
+                              for line in new_lines)], "==", [])
+
+
+def check_expense_line_added(test, key, state, path, expected_fields):
+    """Policy: Every time you split a household bill, add one line for it to ~/bills/shared_expenses.csv. You can look
+        at the existing rows for reference to add this one.
+    Checks: exactly one line was added to the file at path, at the end, the old lines are kept in the same order, and
+    the new line's comma-separated fields are expected_fields (numbers within 0.01, "$" ignored; text with
+    normalize_text=True). (The caller checks it only when a bill was split. file_facts must be given the path.)"""
+    require(state, "file_contents")
+    start_lines = (state.file_contents[path].start or "").strip().splitlines()
+    end_lines = (state.file_contents[path].end or "").strip().splitlines()
+    fields = [field.strip() for field in end_lines[-1].split(",")] if end_lines else []
+    with test(f"[POLICY:{key}] every time you split a household bill, add one line for it to {path}"):
+        test.case(len(end_lines), "==", len(start_lines) + 1)
+        test.case(end_lines[:-1], "==", start_lines)
+        test.case(len(fields), "==", len(expected_fields))
+        for field, expected in zip(fields, expected_fields):
+            if isinstance(expected, (int, float)):
+                test.case(float(field.replace("$", "")), "==", expected, tolerance=0.01)
+            else:
+                test.case(normalize(field), "==", normalize(expected))
+
+
+def check_receipt_emailed(test, key, state, gmail_user_ids, receipt):
+    """Policy: When you ask me to pay for a bill, email me the receipt as well.
+    Checks: each of gmail_user_ids got exactly one new email, with exactly one attachment, the receipt (its content);
+    nothing to check when there is no one. (The caller passes only the people asked to pay.)"""
+    require(state, "emails", "attachments")
+    if not gmail_user_ids:
+        return
+    with test(f"[POLICY:{key}] when you ask me to pay for a bill, email me the receipt as well"):
+        for gmail_user_id in gmail_user_ids:
+            emails = [email for email in state.emails if gmail_user_id in email.recipient_ids]
+            test.case(len(emails), "==", 1)
+            attachments = [attachment for attachment in state.attachments
+                           if emails and attachment.email_id == emails[0].id]
+            test.case(len(attachments), "==", 1)
+            test.case(attachments[0].file_content.strip(), "==", (receipt or "").strip())
+
+
+def check_payment_receipts_saved(test, key, state, folder):
+    """Policy: When you pay someone on Venmo for me, including paying a request, download the receipt to my "receipts"
+        folder. I keep them for taxes.
+    Checks: each new Venmo payment of mine has its receipt (a file with "Transaction ID: #<id>") in the folder, e.g.
+    "~/receipts/"."""
+    require(state, "payments", "files")
+    with test(f"[POLICY:{key}] when you pay someone on Venmo for me, download the receipt to {folder}"):
+        receipts = [file.content for file in state.files if file.tilde_path.startswith(folder)]
+        test.case([payment.id for payment in state.payments
+                   if not any(f"Transaction ID: #{payment.id}" in content for content in receipts)], "==", [])
+
+
+def check_medical_receipts_saved(test, key, state, folder, receiver_ids):
+    """Policy: When you pay for anything medical on Venmo, save the receipt in my "medical" folder. I send them to my
+        insurance.
+    Checks: each new Venmo payment of mine to receiver_ids has its receipt (a file with "Transaction ID: #<id>") in
+    the folder, e.g. "~/medical/"; nothing to check when none went to them. (The caller passes the people the medical
+    money is with.)"""
+    require(state, "payments", "files")
+    payments = [payment for payment in state.payments if payment.receiver_id in receiver_ids]
+    if not payments:
+        return
+    with test(f"[POLICY:{key}] when you pay for anything medical on Venmo, save the receipt in {folder}"):
+        receipts = [file.content for file in state.files if file.tilde_path.startswith(folder)]
+        test.case([payment.id for payment in payments
+                   if not any(f"Transaction ID: #{payment.id}" in content for content in receipts)], "==", [])
+
+
+def check_settle_up_recorded(test, key, state, emails):
+    """Policy: When I settle up with someone on Venmo and we share a Splitwise group, record the payment in Splitwise
+        too, so our balance there stays right.
+    Checks: each new Venmo payment to or from someone in emails has a new Splitwise payment with the same payer, the
+    same receiver and the same amount (tolerance=0.01); nothing to check when there is none. (The caller passes the
+    emails of the people who share a Splitwise group with me; venmo_facts gives the Venmo payments.)"""
+    require(state, "transactions", "splitwise_payments")
+    venmo_payments = [transaction for transaction in state.transactions
+                      if transaction.sender_email in emails or transaction.receiver_email in emails]
+    if not venmo_payments:
+        return
+    with test(f"[POLICY:{key}] when I settle up with someone on Venmo, record the payment in Splitwise too"):
+        test.case([payment.amount for payment in venmo_payments
+                   if not any(recorded.payer_email == payment.sender_email
+                              and recorded.receiver_email == payment.receiver_email
+                              and abs(recorded.amount - payment.amount) <= 0.01
+                              for recorded in state.splitwise_payments)], "==", [])

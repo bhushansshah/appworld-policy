@@ -1,9 +1,12 @@
 """Policy checks shared by the policy scenarios.
 
-- venmo.py, phone.py, simple_note.py, file_system.py, gmail.py: per app, a facts function (e.g. venmo_facts) that
-  copies out of the start and end states what that app's checks read, and one check per app policy behaviour.
-- general.py: the general (not-app) policies; damage.py: the [POLICY:general] checks that the policies' extra work
-  damaged nothing; helpers.py: small helpers (normalize, includes_number, require, ...).
+- venmo.py, phone.py, simple_note.py, file_system.py, gmail.py, splitwise.py: per app, a facts function (e.g.
+  venmo_facts) that copies out of the start and end states what checks read about that app.
+- A check is filed under the app whose action triggers its policy, even when the policy acts in another app: "When
+  you pay someone on Venmo, save the receipt" and "After you pay me, text me the amount" are in venmo.py; "Don't
+  text anyone late at night" is in phone.py. (So far only venmo.py and phone.py have checks.)
+- damage.py: the [POLICY:general] checks that the policies' extra work damaged nothing; helpers.py: small helpers
+  (normalize, includes_number, require, ...).
 
 Each check's docstring starts with the policy it tests, as a rule ("Policy: ..."), then what it checks
 ("Checks: ..."); its one label, "[POLICY:<key>] <the policy>", says that policy.

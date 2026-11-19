@@ -1,8 +1,7 @@
-"""Simple Note: the facts the note checks read, and the checks of Simple Note policies (see __init__.py)."""
+"""Simple Note: the facts about notes that checks read (the checks are filed under the app whose action triggers
+their policy, e.g. venmo.py; see __init__.py)."""
 
 from munch import Munch
-
-from policy_scenarios.policies.helpers import normalize, require
 
 
 def note_facts(models, main_user, titles=()):
@@ -20,23 +19,3 @@ def note_facts(models, main_user, titles=()):
     _, updated, _ = models.changed_records("simple_note.Note", updated_state="start")
     facts.updated_note_titles = [note.title for note in updated]
     return facts
-
-
-def check_note_lines_marked(test, key, state, title, suffix_by_line_start):
-    """Policy: I keep an "IOUs" note of money I owe people. When you pay one back, add " - paid" to the end of its line.
-    Policy: When you collect money for a bill I wrote down in a note, update that note: at the end of each person's
-        line, add '- payment received' if they have already paid me, or '- payment not received yet' if they haven't.
-    Checks: in the note titled title, each line starting with a key of suffix_by_line_start ends with that key's
-    suffix, and every other line (a header too) is unchanged, with no line added or removed (normalize_text=True);
-    nothing to check when no line is to be marked. (note_facts must be given the title.)"""
-    require(state, "notes")
-    if not suffix_by_line_start:
-        return
-    start_lines = [line.strip() for line in state.notes[title].start.strip().splitlines()]
-    end_lines = [line.strip() for line in state.notes[title].end.strip().splitlines()]
-    expected = []
-    for line in start_lines:
-        suffixes = [suffix for line_start, suffix in suffix_by_line_start.items() if line.startswith(line_start)]
-        expected.append(normalize(line + suffixes[0] if suffixes else line))
-    with test(f"[POLICY:{key}] mark lines of the note \"{title}\""):
-        test.case([normalize(line) for line in end_lines], "==", expected)
